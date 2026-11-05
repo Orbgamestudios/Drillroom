@@ -1,0 +1,14 @@
+{
+  "name": "drillroom",
+  "version": "1.0.0",
+  "description": "MCAT DrillRoom - Authentic MCAT Question Bank & Timed Practice Section Engine with Cross-Device Cloud Sync",
+  "private": true,
+  "scripts": {
+    "test": "node scratch/test_cross_exam_deduplication.js && node scratch/test_skip_passage_and_more_tools.js && node scratch/test_cloud_sync.js",
+    "dev:worker": "wrangler dev",
+    "deploy:worker": "wrangler deploy"
+  },
+  "devDependencies": {
+    "wrangler": "^4.158.0"
+  }
+}

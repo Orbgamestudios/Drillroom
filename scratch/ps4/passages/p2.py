@@ -1,0 +1,80 @@
+import sys
+import os
+
+passage_data = {
+  "id": "exam_ps90_4_p2",
+  "sec": "P/S",
+  "topic": "Psychophysical Scaling Laws: Weber, Fechner & Stevens' Power Law",
+  "sheet": None,
+  "label": "Psychological, Social, and Biological Foundations of Behavior",
+  "examId": "ps90_4",
+  "passage": "<div class=\"ttl\">Passage 2 (Questions 7&ndash;12)</div>\n<p>A foundational objective of sensory psychophysics is establishing mathematical scaling laws that correlate objective physical stimulus magnitude ($I$) with subjective conscious perceptual intensity ($S$). Ernst Weber initially demonstrated that the difference threshold ($\\Delta I$) increases in direct linear proportion to baseline intensity, yielding the invariant Weber fraction: $k = \\Delta I / I$. Gustav Fechner subsequently expanded Weber's empirical finding into a general psychophysical law by making a fundamental theoretical assumption: that each just noticeable difference (JND) represents an identical unit increment of subjective psychological sensation ($\\Delta S = c$). By integrating Weber's relationship, Fechner derived the logarithmic scaling law, $S = k \\ln(I / I_0)$, asserting that subjective sensation grows as the logarithm of physical stimulus intensity.</p>\n<p>In the mid-twentieth century, S. S. Stevens challenged Fechner's reliance on indirect JND threshold summation, arguing that observers can directly estimate perceived magnitude on a continuous numerical scale. Utilizing direct magnitude estimation protocols, Stevens formulated the Power Law: $\\Psi = k I^a$, where $\\Psi$ is perceived psychological magnitude, $k$ is an empirical scaling constant, and $a$ is an exponent characteristic of the specific sensory modality. When the exponent $a < 1$, the sensory system exhibits response compression, wherein substantial increases in physical intensity generate modest increases in sensation. When $a = 1$, perception scales veridically in direct proportion to physical magnitude. Conversely, when $a > 1$, the modality exhibits response expansion, where incremental physical increases trigger disproportionately severe sensory amplifications.</p>\n<p>To evaluate the comparative validity of Fechnerian and Stevensian models across disparate biological senses, sensory physiologists tested 50 healthy adults across four stimulus domains using calibrated computerized delivery apparatuses. Standardized magnitude estimation scores and discrimination limens were gathered to calculate empirical exponents and Weber constants, as summarized in Table 1.</p>\n<table class=\"tbl\">\n  <caption>Table 1 Empirical Weber fractions, Stevens power exponents, and perceptual magnitude multipliers under twofold and fourfold stimulus increases</caption>\n  <thead>\n    <tr><th>Stimulus Modality</th><th>Weber Fraction ($k$)</th><th>Stevens Exponent ($a$)</th><th>Perceptual Scaling Regime</th><th>Perceived Magnitude ($2 \\times I_0$)</th><th>Perceived Magnitude ($4 \\times I_0$)</th><th>Equal-JND Postulate Valid?</th></tr>\n  </thead>\n  <tbody>\n    <tr><td>Visual Brightness (500 nm)</td><td>0.016</td><td>0.33</td><td>Response Compression</td><td>$1.26 \\times$</td><td>$1.59 \\times$</td><td>Partially approximated</td></tr>\n    <tr><td>Acoustic Loudness (1 kHz)</td><td>0.088</td><td>0.60</td><td>Response Compression</td><td>$1.52 \\times$</td><td>$2.30 \\times$</td><td>Partially approximated</td></tr>\n    <tr><td>Apparent Line Length</td><td>0.029</td><td>1.00</td><td>Linear Veridical</td><td>$2.00 \\times$</td><td>$4.00 \\times$</td><td>Yes (Empirically verified)</td></tr>\n    <tr><td>Cutaneous Electric Shock</td><td>0.013</td><td>3.50</td><td>Response Expansion</td><td>$11.31 \\times$</td><td>$128.00 \\times$</td><td>No (Directly violated)</td></tr>\n  </tbody>\n</table>",
+  "qs": [
+    {
+      "q": "What fundamental theoretical assumption underlies Fechner's logarithmic law ($S = k \\ln I$), and why is it invalid for modalities exhibiting response expansion?",
+      "ch": [
+        "Fechner assumed that physical energy increases exponentially, ignoring baseline receptor adaptation thresholds.",
+        "Fechner assumed that all JNDs represent identical perceptual increments, which fails when sensation accelerates.",
+        "Fechner assumed that neural firing frequencies remain strictly constant, ignoring synaptic neurotransmitter depletion.",
+        "Fechner assumed that difference thresholds decrease with stimulus intensity, reversing empirical Weber fractions."
+      ],
+      "a": 1,
+      "e": "<strong>Fechner's equal-JND assumption and response expansion:</strong> Fechner derived his logarithmic law ($S = k \\ln(I/I_0)$) by mathematically integrating Weber's Law ($\\Delta I / I = k$). Crucially, this mathematical integration requires the core theoretical assumption that every just noticeable difference (JND) represents an identical, invariant unit increment in subjective psychological magnitude ($\\Delta S = c$). While this logarithmic approximation holds reasonably well for compressive modalities (such as brightness or loudness over a moderate range), it collapses completely for modalities characterized by response expansion (such as cutaneous electric shock, where $a = 3.50$). In expansive modalities, successive JNDs feel progressively larger, more agonizing, and non-linear, disproving the claim that all JNDs are subjectively equal.<br><br><em>Distractor Traps:</em><br>&bull; A (Misattribution): Fechner made assumptions about internal subjective psychological experience relative to physical energy, not an assumption that physical energy grows exponentially.<br>&bull; C (Irrelevant Neurobiology): Fechner's 19th-century derivation predated modern synaptic transmission discoveries and was based on perceptual psychometrics, not neurotransmitter depletion.<br>&bull; D (Directional Inversion): Weber's Law explicitly demonstrates that difference thresholds increase (not decrease) in direct proportion to baseline stimulus intensity."
+    },
+    {
+      "q": "From an evolutionary and sensory processing perspective, what adaptive advantage is conferred by compressive scaling ($a < 1$) in the visual and auditory modalities?",
+      "ch": [
+        "It amplifies microscopic energy shifts at suprathreshold levels to prevent dangerous physical exposure.",
+        "It eliminates environmental background noise by generating completely flat threshold psychometric functions.",
+        "It compresses vast dynamic ranges of physical stimulus intensity into manageable biological neural ranges.",
+        "It guarantees perfectly linear perceptual representations across all ecological daylight lighting conditions."
+      ],
+      "a": 2,
+      "e": "<strong>Adaptive value of response compression ($a < 1$):</strong> In ecological environments, the physical energy ranges encountered by human visual and auditory organs are enormous. For instance, ambient luminance spans more than 9 orders of magnitude (from starlight at $10^{-4}\\text{ cd/m}^2$ to brilliant sunlight at $10^5\\text{ cd/m}^2$), and auditory acoustic pressures span a dynamic range exceeding 120 decibels. Biological neurons have limited dynamic firing ranges (typically resting around 0 to 500 action potentials per second). Compressive power scaling ($a = 0.33$ for brightness, $a = 0.60$ for loudness) dampens enormous physical energy swings into compact, manageable physiological neural responses, expanding sensitivity at dim/quiet thresholds while preventing receptor saturation and neural exhaustion at intense levels.<br><br><em>Distractor Traps:</em><br>&bull; A (Directional Inversion): Compressive scaling dampens (rather than amplifies) suprathreshold energy shifts; amplification of high intensities describes response expansion.<br>&bull; B (Extreme / Factual Error): Compression does not eliminate sensory noise or flatten detection curves into step functions.<br>&bull; D (Conceptual Contradiction): Compressive scaling is explicitly non-linear (power law with $a < 1$), directly contradicting the assertion of linear veridical representation ($a = 1.0$)."
+    },
+    {
+      "q": "Utilizing Weber's Law and the empirical auditory data from Table 1, what minimum acoustic intensity change is required to detect a difference from a standard stimulus of 250.0 units?",
+      "ch": [
+        "A difference threshold of 22.0 units, calculated from the constant auditory Weber fraction.",
+        "A difference threshold of 16.0 units, calculated from the visual brightness Weber fraction.",
+        "A difference threshold of 28.5 units, calculated from the electric shock Weber fraction.",
+        "A difference threshold of 35.0 units, calculated from the apparent line length Weber fraction."
+      ],
+      "a": 0,
+      "e": "<strong>Applying Weber's fraction to acoustic intensity:</strong> Weber's Law defines the invariant relationship $k = \\Delta I / I$, which rearranges to $\\Delta I = k \\times I$. According to Table 1, the empirical Weber fraction for acoustic loudness is $k = 0.088$. Given a standard acoustic intensity of $I = 250.0\\text{ units}$, the difference threshold (JND) required for an observer to perceive an acoustic intensity change is: $\\Delta I = 0.088 \\times 250.0 = 22.0\\text{ units}$.<br><br><em>Distractor Traps:</em><br>&bull; B (Wrong Data Value): 16.0 units results from using an incorrect multiplier ($0.064$), confusing the acoustic Weber fraction with other sensory parameters.<br>&bull; C (Wrong Modality Value): 28.5 units miscalculates using an arbitrary fractional constant rather than the established empirical acoustic constant of 0.088.<br>&bull; D (Overestimation Trap): 35.0 units corresponds to a Weber fraction of 0.140, substantially overestimating the physical difference limen required for acoustic discrimination."
+    },
+    {
+      "q": "Why does the cutaneous electric shock modality exhibit a dramatic response expansion exponent ($a = 3.50$), causing perceived intensity to increase 128-fold when physical shock quadruples?",
+      "ch": [
+        "Cutaneous A-beta mechanoreceptors undergo rapid spatial summation across large sensory receptive fields.",
+        "Electric currents trigger widespread non-specific hyperpolarization across all subepidermal sensory axons.",
+        "Thermal nociceptors release inhibitory endorphins that paradoxically stimulate cortical pain centers.",
+        "Nociceptive pathways act as vital biological emergency alarms that demand urgent protective escape behavior."
+      ],
+      "a": 3,
+      "e": "<strong>Evolutionary neurobiology of response expansion in nociception:</strong> In Stevens' Power Law, an exponent significantly greater than 1 ($a = 3.50$ for electric shock) indicates that perceived sensation escalates exponentially as stimulus energy increases. From an evolutionary perspective, mechanical or electrical trauma poses an immediate, catastrophic threat to tissue integrity and organismal survival. Unlike vision or hearing—where neutral spatial information must be sampled over wide environmental gradients—nociceptive stimulation must act as an uncompromising biological emergency alarm. A modest increase in noxious stimulation indicates accelerating bodily damage, demanding immediate, overwhelming behavioral avoidance and withdrawal reflexes.<br><br><em>Distractor Traps:</em><br>&bull; A (Wrong Sensory Receptor): A-beta fibers transduce non-noxious tactile and vibration stimuli, whereas electric shock and noxious pain are carried by thinly myelinated A-delta and unmyelinated C nociceptive fibers.<br>&bull; B (Physiological Inversion): Electrical currents depolarize (rather than hyperpolarize) axonal membranes to initiate action potentials.<br>&bull; C (Physiological Contradiction): Endorphins are endogenous opioid peptides that inhibit nociceptive transmission and reduce pain, rather than amplifying pain perception."
+    },
+    {
+      "q": "How does Stevens' direct magnitude estimation methodology differ fundamentally from Fechner's classical indirect psychophysical measurement protocol?",
+      "ch": [
+        "Fechner had subjects rate suprathreshold stimuli, whereas Stevens restricted trials to absolute limens.",
+        "Stevens asked observers to assign numbers directly to sensations, bypassing indirect JND counting.",
+        "Fechner utilized forced-choice objective tracking, whereas Stevens recorded autonomic pupil dilation.",
+        "Stevens relied on electrical microstimulation, whereas Fechner evaluated natural environmental stimuli."
+      ],
+      "a": 1,
+      "e": "<strong>Direct magnitude estimation versus indirect JND summation:</strong> Fechner's psychophysical approach was indirect: he measured difference thresholds (JNDs) at various points along the physical continuum and mathematically integrated them under the unproven assumption that each JND constituted an equal unit of psychological sensation. S. S. Stevens revolutionized psychophysics by introducing direct scaling methods. In Stevens' magnitude estimation paradigm, an experimenter presents a suprathreshold modulus stimulus (assigned an arbitrary number, such as 100), and participants directly assign positive numerical values to subsequent test stimuli in proportion to their subjective perceived intensity, entirely bypassing indirect discrimination thresholds.<br><br><em>Distractor Traps:</em><br>&bull; A (Methodological Inversion): Fechner relied heavily on near-threshold JND discrimination, while Stevens explicitly utilized suprathreshold stimulus ratings.<br>&bull; C (Factual Inaccuracy): Neither Fechner nor Stevens used autonomic pupillometry as their primary psychophysical scaling metric; both relied on verbal/behavioral responses.<br>&bull; D (False Premise): Stevens utilized standard perceptual modalities (lights, tones, weights, line lengths) using psychophysical magnitude estimation, not invasive microstimulation."
+    },
+    {
+      "q": "At what anatomical level does the physiological compression observed in visual brightness perception ($a = 0.33$) predominantly originate within the visual processing pathway?",
+      "ch": [
+        "In the primary visual cortex (V1) through lateral inhibition among binocular simple receptive fields.",
+        "In the posterior parietal cortex during the integration of dorsal stream spatial coordinate transforms.",
+        "At the retinal photoreceptor and bipolar cell interface through biochemical phototransduction kinetics.",
+        "Within the lateral geniculate nucleus through top-down feedback projections from the prefrontal cortex."
+      ],
+      "a": 2,
+      "e": "<strong>Retinal neurobiology of compressive sensory scaling:</strong> Compressive psychophysical scaling is not merely a cognitive abstraction; it is rooted in early peripheral sensory biophysics. In the visual system, response compression occurs primarily at the initial stages of retinal signal processing. When photons strike rhodopsin or cone opsins, they trigger a biochemical G-protein phototransduction cascade ($G_{\\text{t}}$ transducin activating cGMP phosphodiesterase). At higher light levels, calcium feedback, rhodopsin kinase phosphorylation, and arrestin binding downregulate the gain of the transduction cascade. Furthermore, graded potentials in photoreceptors and horizontal/bipolar cell networks exhibit saturating non-linearities, compressing wide luminance inputs before optic nerve transmission.<br><br><em>Distractor Traps:</em><br>&bull; A (Incorrect Anatomical Locus): Cortical lateral inhibition shapes edge detection and spatial contrast (Mach bands), but basic compressive luminance scaling originates peripherally in the retina.<br>&bull; B (Incorrect Functional Pathway): The posterior parietal cortex processes spatial \"where/how\" calculations, not primary sensory brightness compression.<br>&bull; D (Incorrect Mechanism): The LGN relays retinal signals to V1; primary non-linear compression of brightness is already accomplished at the retinal photoreceptor/bipolar interface."
+    }
+  ]
+}
