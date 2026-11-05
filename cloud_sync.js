@@ -22,7 +22,7 @@
   };
 
   // Default endpoint for Cloudflare Worker; user can customize in Cloud Settings
-  const DEFAULT_API_URL = "https://drillroom.orbgamestudios.workers.dev";
+  const DEFAULT_API_URL = "https://drillroom.solitary-sky-76c1.workers.dev";
 
   function getApiUrl() {
     let url = localStorage.getItem(STORAGE_KEYS.API_URL) || DEFAULT_API_URL;

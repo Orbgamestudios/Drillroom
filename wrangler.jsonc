@@ -1,6 +1,12 @@
 {
-  "$schema": "node_modules/wrangler/config-schema.json",
-  "name": "drillroom",
-  "main": "worker/index.js",
-  "compatibility_date": "2026-10-01"
+	"$schema": "node_modules/wrangler/config-schema.json",
+	"name": "drillroom",
+	"main": "worker/index.js",
+	"compatibility_date": "2026-10-01",
+	"kv_namespaces": [
+		{
+			"binding": "DRILLROOM_KV",
+			"id": "aff1e8ac32854e2aae3bbf95569dba65"
+		}
+	]
 }
