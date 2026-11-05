@@ -328,10 +328,10 @@
         btn.innerHTML = `<span style="display:inline-block;animation:spin 1s linear infinite">⟳</span> Syncing...`;
         btn.style.color = "#FFD700";
       } else if (session.username) {
-        btn.innerHTML = `☁️ <span style="font-weight:700">${session.displayName || session.username}</span> <span style="display:inline-block;width:7px;height:7px;border-radius:50%;background:#4ADE80;margin-left:4px" title="Cloud Synced"></span>`;
+        btn.innerHTML = `<span style="font-weight:700">${session.displayName || session.username}</span> <span style="display:inline-block;width:7px;height:7px;border-radius:50%;background:#4ADE80;margin-left:4px" title="Cloud Synced"></span>`;
         btn.style.color = "#fff";
       } else {
-        btn.innerHTML = `☁️ Sign In / Sync`;
+        btn.innerHTML = `Sign In / Sync`;
         btn.style.color = "rgba(255,255,255,0.9)";
       }
     }
@@ -339,9 +339,9 @@
     const homeBtn = document.getElementById("bCloudAccount");
     if (homeBtn) {
       if (session.username) {
-        homeBtn.innerHTML = `☁️ Synced as <b>${session.displayName || session.username}</b>`;
+        homeBtn.innerHTML = `Synced as <b>${session.displayName || session.username}</b>`;
       } else {
-        homeBtn.innerHTML = `☁️ Cloud Sync &amp; Account`;
+        homeBtn.innerHTML = `Cloud Sync &amp; Account`;
       }
     }
   }
@@ -368,7 +368,6 @@
         <!-- Header -->
         <div style="background:var(--nav);color:#fff;padding:14px 20px;display:flex;justify-content:space-between;align-items:center">
           <div style="display:flex;align-items:center;gap:10px">
-            <span style="font-size:18px">☁️</span>
             <div>
               <div style="font-weight:700;font-size:15px;letter-spacing:0.3px">DrillRoom Cloud Sync</div>
               <div style="font-size:11.5px;color:rgba(255,255,255,0.75)">Practice across multiple computers with 0 duplicates</div>
@@ -390,7 +389,7 @@
                 </div>
               </div>
               <button class="btn pri" id="csSyncNowBtn" style="padding:9px 16px;display:flex;align-items:center;gap:6px">
-                <span id="csSyncSpinner" style="display:inline-block">🔄</span> Sync Now
+                <span id="csSyncSpinner" style="display:inline-block"></span> Sync Now
               </button>
             </div>
 
@@ -418,7 +417,7 @@
             <div style="border-top:1px solid #E2E8F0;padding-top:14px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px">
               <button class="btn" id="csLogoutBtn" style="color:var(--bad)">Sign Out</button>
               <div style="display:flex;gap:8px">
-                <button class="btn" id="csToggleAdvancedBtn" style="font-size:12px">⚙️ Cloud Server</button>
+                <button class="btn" id="csToggleAdvancedBtn" style="font-size:12px">Cloud Server</button>
               </div>
             </div>
           ` : `
@@ -452,7 +451,7 @@
             <div id="csStatusMsg" style="min-height:22px;font-size:12.5px;margin-bottom:16px"></div>
 
             <div style="display:flex;justify-content:space-between;align-items:center;gap:10px">
-              <button class="btn" id="csToggleAdvancedBtn" style="font-size:12px">⚙️ Cloud Server</button>
+              <button class="btn" id="csToggleAdvancedBtn" style="font-size:12px">Cloud Server</button>
               <button class="btn pri" id="csSubmitBtn" style="padding:10px 22px;font-size:13.5px">Log In &amp; Sync</button>
             </div>
           `}

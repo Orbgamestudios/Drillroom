@@ -1,0 +1,68 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="100%" height="100%">
+  <defs>
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#081826"/>
+      <stop offset="45%" stop-color="#0F2742"/>
+      <stop offset="100%" stop-color="#1B3A5C"/>
+    </linearGradient>
+    <linearGradient id="accentCyan" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#38BDF8"/>
+      <stop offset="100%" stop-color="#0284C7"/>
+    </linearGradient>
+    <linearGradient id="goldGlow" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#FDE047"/>
+      <stop offset="100%" stop-color="#EAB308"/>
+    </linearGradient>
+    <filter id="softGlow" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="10" result="blur" />
+      <feComposite in="SourceGraphic" in2="blur" operator="over" />
+    </filter>
+  </defs>
+
+  <!-- Outer Rounded Squircle -->
+  <rect x="28" y="28" width="456" height="456" rx="108" fill="url(#bgGrad)"/>
+  <rect x="28" y="28" width="456" height="456" rx="108" fill="none" stroke="url(#accentCyan)" stroke-width="6" stroke-opacity="0.32"/>
+
+  <!-- Subtle Target Radar Rings (Precision Drills) -->
+  <circle cx="256" cy="256" r="168" fill="none" stroke="#38BDF8" stroke-width="2" stroke-opacity="0.16" stroke-dasharray="10 8"/>
+  <circle cx="256" cy="256" r="110" fill="none" stroke="#38BDF8" stroke-width="2" stroke-opacity="0.22"/>
+
+  <!-- Tick Marks -->
+  <line x1="256" y1="58" x2="256" y2="82" stroke="#38BDF8" stroke-width="4" stroke-linecap="round" stroke-opacity="0.45"/>
+  <line x1="256" y1="430" x2="256" y2="454" stroke="#38BDF8" stroke-width="4" stroke-linecap="round" stroke-opacity="0.45"/>
+  <line x1="58" y1="256" x2="82" y2="256" stroke="#38BDF8" stroke-width="4" stroke-linecap="round" stroke-opacity="0.45"/>
+  <line x1="430" y1="256" x2="454" y2="256" stroke="#38BDF8" stroke-width="4" stroke-linecap="round" stroke-opacity="0.45"/>
+
+  <!-- Bold Monogram "D" for DrillRoom -->
+  <!-- Outer D curve -->
+  <path d="M 160 125 
+           L 242 125 
+           C 328 125 382 178 382 256 
+           C 382 334 328 387 242 387 
+           L 160 387 
+           Z" 
+        fill="none" 
+        stroke="#FFFFFF" 
+        stroke-width="34" 
+        stroke-linejoin="round"
+        stroke-linecap="round"/>
+
+  <!-- Medical EKG Pulse + Precision Reticle Horizontal Wave in Cyan -->
+  <path d="M 130 256 
+           L 205 256 
+           L 220 220 
+           L 238 296 
+           L 256 200 
+           L 274 290 
+           L 288 240 
+           L 300 256 
+           L 382 256" 
+        fill="none" 
+        stroke="url(#accentCyan)" 
+        stroke-width="12" 
+        stroke-linecap="round" 
+        stroke-linejoin="round"/>
+
+  <!-- Central Target Star (528 Bullseye Target) -->
+  <polygon points="256,182 261,196 275,196 264,205 268,219 256,210 244,219 248,205 237,196 251,196" fill="url(#goldGlow)"/>
+</svg>

@@ -256,13 +256,13 @@
         let prefix = "";
 
         if (firstLine.startsWith("[!TIP]")) {
-          borderCol = "var(--ok)"; bgCol = "#EBF7EE"; prefix = "<strong style='color:var(--ok)'>💡 PRO TIP:</strong> ";
+          borderCol = "var(--ok)"; bgCol = "#EBF7EE"; prefix = "<strong style='color:var(--ok)'>PRO TIP:</strong> ";
           bqLines[0] = firstLine.slice(6).trim();
         } else if (firstLine.startsWith("[!WARNING]")) {
-          borderCol = "var(--warn)"; bgCol = "#FDF7E7"; prefix = "<strong style='color:var(--warn)'>⚠️ COMMON TRAP:</strong> ";
+          borderCol = "var(--warn)"; bgCol = "#FDF7E7"; prefix = "<strong style='color:var(--warn)'>COMMON TRAP:</strong> ";
           bqLines[0] = firstLine.slice(10).trim();
         } else if (firstLine.startsWith("[!IMPORTANT]") || firstLine.startsWith("[!CAUTION]")) {
-          borderCol = "var(--bad)"; bgCol = "#FDF0ED"; prefix = "<strong style='color:var(--bad)'>🚨 HIGH PRIORITY:</strong> ";
+          borderCol = "var(--bad)"; bgCol = "#FDF0ED"; prefix = "<strong style='color:var(--bad)'>HIGH PRIORITY:</strong> ";
           bqLines[0] = firstLine.replace(/^\[!(IMPORTANT|CAUTION)\]/, "").trim();
         }
 
@@ -1020,7 +1020,7 @@ Give the student a prioritized checklist of 3–4 ultra-specific topics, equatio
           <div style="margin-bottom:18px">
             <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
               <label style="font-size:13px;font-weight:700">Preferred Model</label>
-              <button class="btn" id="gDetectModelsBtn" style="font-size:11.5px;padding:2px 8px" title="Query Google API for models enabled on this key">🔄 Auto-Detect Models</button>
+              <button class="btn" id="gDetectModelsBtn" style="font-size:11.5px;padding:2px 8px" title="Query Google API for models enabled on this key">Auto-Detect Models</button>
             </div>
             <select id="gModalModelSelect" style="width:100%;padding:8px 10px;border:1px solid var(--line2);border-radius:2px;font-size:13px;background:#fff">
               ${(!SUPPORTED_MODELS.some(m => m.id === curModel) && curModel !== "custom" ? `<option value="${escapeHtml(curModel)}" selected>${escapeHtml(curModel)} (Custom)</option>` : "")}
@@ -1038,7 +1038,7 @@ Give the student a prioritized checklist of 3–4 ultra-specific topics, equatio
           <div id="gModalStatus" style="min-height:22px;margin-bottom:16px;font-size:12.5px"></div>
 
           <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;border-top:1px solid #E4E7EA;padding-top:16px">
-            <button class="btn" id="gModalTestBtn" style="font-size:12.5px">⚡ Test Connection</button>
+            <button class="btn" id="gModalTestBtn" style="font-size:12.5px">Test Connection</button>
             <div style="display:flex;gap:8px">
               <button class="btn" id="gModalClearBtn" style="color:var(--bad)">Clear Key</button>
               <button class="btn pri" id="gModalSaveBtn">Save Settings</button>

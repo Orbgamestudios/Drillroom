@@ -1,5 +1,10 @@
 <!doctype html>
 <html><head><meta charset="utf-8"><title>Drill Room</title>
+<link rel="icon" type="image/svg+xml" href="favicon.svg">
+<link rel="icon" type="image/png" sizes="32x32" href="favicon-32x32.png">
+<link rel="icon" type="image/x-icon" href="favicon.ico">
+<link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png">
+<meta name="theme-color" content="#1B3A5C">
 <style>
 :root{
   --nav:#1B3A5C; --pg:#FFFFFF; --shell:#E8EAED; --ink:#000; --soft:#3A3A3A; --faint:#6B6B6B;
@@ -412,9 +417,9 @@ body.strike .opt:hover{background:#FBEAE8}
 <body><div id="root">
 
 <div id="top">
-  <div class="l"><span class="bd">DRILL ROOM</span><span class="sc" id="tSect">Passage bank</span></div>
+  <div class="l"><img src="favicon.svg" alt="DrillRoom" width="22" height="22" style="border-radius:4px;vertical-align:middle;display:inline-block"><span class="bd">DRILL ROOM</span><span class="sc" id="tSect">Passage bank</span></div>
   <div class="r">
-    <button id="tCloudAccount" title="Cloud Sync & Account across devices" style="font-size:12px;padding:3px 9px;border:1px solid rgba(255,255,255,0.35);border-radius:3px;color:#fff;background:rgba(255,255,255,0.12);display:inline-flex;align-items:center;gap:4px">☁️ Cloud Sync</button>
+    <button id="tCloudAccount" title="Cloud Sync & Account across devices" style="font-size:12px;padding:3px 9px;border:1px solid rgba(255,255,255,0.35);border-radius:3px;color:#fff;background:rgba(255,255,255,0.12);display:inline-flex;align-items:center;gap:4px">Cloud Sync</button>
     <button id="tGeminiKey" title="Configure Gemini AI Key & Settings" style="font-size:12px;padding:3px 9px;border:1px solid rgba(255,255,255,0.35);border-radius:3px;color:#fff;background:rgba(255,255,255,0.12);display:inline-flex;align-items:center;gap:4px">Gemini AI</button>
     <span id="tCount"></span>
     <span id="clk" class="hide"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg><span id="clkT">--:--</span></span>
@@ -436,7 +441,7 @@ body.strike .opt:hover{background:#FBEAE8}
     <div class="acts">
       <button class="btn pri" id="bNextSet">Start next set</button>
       <a class="btn" href="scan.html" style="text-decoration:none;display:inline-block">CARS scan drills</a>
-      <button class="btn" id="bCloudAccount" title="Cloud Sync across computers">☁️ Cloud Sync &amp; Account</button>
+      <button class="btn" id="bCloudAccount" title="Cloud Sync across computers">Cloud Sync &amp; Account</button>
       <button class="btn" id="bGeminiKey" title="Configure Gemini API Key">Gemini AI</button>
       <button class="btn" id="bExport">Export progress</button>
       <button class="btn" id="bReset">Reset</button>
@@ -473,7 +478,6 @@ body.strike .opt:hover{background:#FBEAE8}
           <button data-c="two">Narrowed to two</button>
           <button data-c="guess">Guessed</button>
         </div>
-        <div class="nt">Required. A guess that lands right is a gap, not a point.</div>
       </div>
     </div>
   </div>

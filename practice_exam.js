@@ -808,10 +808,14 @@ function getHistory() {
   }
 
   // Always deduplicate on load to clean up any past duplicates
-  const deduped = deduplicateHistory(hist);
-  if (deduped.length !== hist.length) {
-    hist = deduped;
+  let deduped = deduplicateHistory(hist);
+  // Exclude any past attempts where passages were skipped so they never count toward score history or averages
+  const cleaned = deduped.filter(h => (!h.skippedCount || h.skippedCount === 0) && (!h.scoredTotal || h.scoredTotal === h.totalQs));
+  if (cleaned.length !== hist.length) {
+    hist = cleaned;
     saveHistory(hist);
+  } else {
+    hist = deduped;
   }
 
   return hist;
@@ -825,6 +829,11 @@ function saveHistory(hist) {
 }
 
 function addHistoryEntry(rec) {
+  if (!rec) return;
+  // Never add attempts where passages were skipped to score history
+  if (rec.skippedCount && rec.skippedCount > 0) return;
+  if (rec.scoredTotal !== undefined && rec.totalQs !== undefined && rec.scoredTotal < rec.totalQs) return;
+
   try { localStorage.setItem(MIGRATED_FLAG_KEY, "1"); } catch(e) {}
   const hist = getHistory();
   // Debounce: prevent adding exact duplicate within 3 seconds
@@ -2520,7 +2529,7 @@ function gradePracticeExam() {
       };
 
       const parentExam = PRACTICE_EXAMS.find(e => e.id === parentId);
-      if (parentExam) {
+      if (parentExam && (h1Data.skippedCount || 0) === 0 && (h2Data.skippedCount || 0) === 0) {
         addHistoryEntry({
           id: "att_comb_" + parentId + "_" + Date.now(),
           examId: parentExam.id,
@@ -2564,35 +2573,37 @@ function gradePracticeExam() {
     };
   });
 
-  // Save to History Log with reviewData & detail attached
-  addHistoryEntry({
-    id: histId,
-    examId: pe.exam.id,
-    sec: pe.exam.sec,
-    duration: pe.exam.duration,
-    type: pe.exam.type || (pe.exam._isAdaptive ? "adaptive" : (pe.exam.isHalf ? "half" : (pe.exam.duration + "min"))),
-    suite: pe.exam.suite,
-    suiteTitle: pe.exam.suiteTitle,
-    label: pe.exam.label,
-    scaledScore: score,
-    rawScore: right,
-    totalQs: n,
-    scoredTotal: scoredTotal,
-    skippedCount: skippedCount,
-    pct: pct,
-    percentile: ptile,
-    solid: solid,
-    lucky: lucky,
-    shaky: shaky,
-    timeUsed: timeUsed,
-    ts: Date.now(),
-    includedInAverage: true,
-    isHalf: !!pe.exam.isHalf,
-    halfIndex: pe.exam.halfIndex,
-    _isAdaptive: !!pe.exam._isAdaptive,
-    reviewData: reviewData,
-    detail: sessionDetail
-  });
+  // Save to History Log ONLY if no passages were skipped
+  if (skippedCount === 0) {
+    addHistoryEntry({
+      id: histId,
+      examId: pe.exam.id,
+      sec: pe.exam.sec,
+      duration: pe.exam.duration,
+      type: pe.exam.type || (pe.exam._isAdaptive ? "adaptive" : (pe.exam.isHalf ? "half" : (pe.exam.duration + "min"))),
+      suite: pe.exam.suite,
+      suiteTitle: pe.exam.suiteTitle,
+      label: pe.exam.label,
+      scaledScore: score,
+      rawScore: right,
+      totalQs: n,
+      scoredTotal: scoredTotal,
+      skippedCount: skippedCount,
+      pct: pct,
+      percentile: ptile,
+      solid: solid,
+      lucky: lucky,
+      shaky: shaky,
+      timeUsed: timeUsed,
+      ts: Date.now(),
+      includedInAverage: true,
+      isHalf: !!pe.exam.isHalf,
+      halfIndex: pe.exam.halfIndex,
+      _isAdaptive: !!pe.exam._isAdaptive,
+      reviewData: reviewData,
+      detail: sessionDetail
+    });
+  }
 
   if (typeof DrillRoomCloud !== "undefined" && typeof DrillRoomCloud.triggerAutoSync === "function") {
     DrillRoomCloud.triggerAutoSync();
@@ -2616,7 +2627,10 @@ function gradePracticeExam() {
   v += `<div style="margin-top:14px;padding:12px 14px;background:#F2F6FA;border:1px solid var(--line);font-size:13px;line-height:1.6">
     <strong>Score context:</strong> 518+ = top 3 programs &bull; 515+ = top 10 &bull; 510+ = competitive &bull; 500 = median<br>
     Your section score of <strong>${score}</strong> projects to a total of <strong>~${score * 4}</strong> if consistent across all four sections.<br>
-    <span style="display:inline-block;margin-top:6px;color:var(--ok);font-weight:700">✓ Recorded to your History &amp; Rolling Averages.</span>
+    ${skippedCount > 0
+      ? `<span style="display:inline-block;margin-top:6px;color:var(--faint);font-weight:600">Passages were skipped (${skippedCount} questions excluded): marked completed in your question bank, and excluded from score history.</span>`
+      : `<span style="display:inline-block;margin-top:6px;color:var(--ok);font-weight:700">Recorded to your History &amp; Rolling Averages.</span>`
+    }
   </div>`;
 
   // Adaptive Study Section Banner
@@ -2628,7 +2642,7 @@ function gradePracticeExam() {
         </div>
         <div style="font-size:13px;line-height:1.6;margin-top:6px;color:var(--soft)">
           You completed <strong>${right} of ${n} questions (${pct}%)</strong> in ${Math.max(1, Math.round(timeUsed / 60))} minutes (Scaled Score: <strong>${score} / 132</strong> &middot; ${ptile} percentile).<br>
-          ✓ Successfully recorded to your History &amp; Rolling Averages.
+          ${skippedCount > 0 ? "Passages were skipped: excluded from score history." : "Successfully recorded to your History &amp; Rolling Averages."}
         </div>
       </div>
     `;
@@ -2649,7 +2663,7 @@ function gradePracticeExam() {
               &bull; Part 2: <strong>${combinedSummary.h2Score} / 132</strong> (${combinedSummary.h2Right}/${combinedSummary.h2Total})<br>
               &bull; <strong style="font-size:14px">Overall 90-Min Composite Score: ${combinedSummary.combinedScore} / 132</strong> (${combinedSummary.combinedPct}% &middot; ${combinedSummary.combinedPtile} percentile)
             </div>
-            ✓ <strong>Full 90-minute section marked complete!</strong> Recorded to your score history and 528 composite exam suite.
+            <strong>Full 90-minute section marked complete!</strong> Recorded to your score history and 528 composite exam suite.
           </div>
         </div>
       `;
@@ -2961,9 +2975,9 @@ function renderReviewQuestionList(reviewQs, secKey) {
         <div class="pe-filter-row">
           <span class="lbl">Result:</span>
           <button class="pe-filter-btn active" data-f-type="outcome" data-f-val="all">All <span class="pe-filter-count">${total}</span></button>
-          <button class="pe-filter-btn f-bad" data-f-type="outcome" data-f-val="incorrect">✕ Missed <span class="pe-filter-count">${incorrectCount}</span></button>
-          <button class="pe-filter-btn f-ok" data-f-type="outcome" data-f-val="correct">✓ Correct <span class="pe-filter-count">${correctCount}</span></button>
-          ${skippedCount > 0 ? `<button class="pe-filter-btn" data-f-type="outcome" data-f-val="skipped" style="color:#64748B">&#10549; Skipped <span class="pe-filter-count">${skippedCount}</span></button>` : ""}
+          <button class="pe-filter-btn f-bad" data-f-type="outcome" data-f-val="incorrect">Missed <span class="pe-filter-count">${incorrectCount}</span></button>
+          <button class="pe-filter-btn f-ok" data-f-type="outcome" data-f-val="correct">Correct <span class="pe-filter-count">${correctCount}</span></button>
+          ${skippedCount > 0 ? `<button class="pe-filter-btn" data-f-type="outcome" data-f-val="skipped" style="color:#64748B">Skipped <span class="pe-filter-count">${skippedCount}</span></button>` : ""}
         </div>
         <div class="pe-filter-row">
           <span class="lbl">Confidence:</span>
@@ -2971,8 +2985,8 @@ function renderReviewQuestionList(reviewQs, secKey) {
           <button class="pe-filter-btn" data-f-type="conf" data-f-val="sure">Knew It / Sure <span class="pe-filter-count">${sureCount}</span></button>
           <button class="pe-filter-btn" data-f-type="conf" data-f-val="two">Narrowed to 2 <span class="pe-filter-count">${twoCount}</span></button>
           <button class="pe-filter-btn" data-f-type="conf" data-f-val="guess">Guessed <span class="pe-filter-count">${guessCount}</span></button>
-          <button class="pe-filter-btn f-cw" data-f-type="conf" data-f-val="cw" title="High confidence but missed">⚠ Confidently Wrong <span class="pe-filter-count">${cwCount}</span></button>
-          <button class="pe-filter-btn f-lucky" data-f-type="conf" data-f-val="lucky" title="Answered correctly via guess or 50/50">☘ Lucky Hits <span class="pe-filter-count">${luckyCount}</span></button>
+          <button class="pe-filter-btn f-cw" data-f-type="conf" data-f-val="cw" title="High confidence but missed">Confidently Wrong <span class="pe-filter-count">${cwCount}</span></button>
+          <button class="pe-filter-btn f-lucky" data-f-type="conf" data-f-val="lucky" title="Answered correctly via guess or 50/50">Lucky Hits <span class="pe-filter-count">${luckyCount}</span></button>
         </div>
         <div class="pe-filter-meta-bar">
           <span id="peFilterCountReadout">Showing ${total} of ${total} questions</span>
@@ -3839,7 +3853,7 @@ function paintPracticeExams() {
           aiTag = ` &middot; <span style="color:#2E6DA4;font-weight:700">AI Analysis Ready</span>`;
         }
         if (r.completedViaHalves) {
-          subDesc = `${totalQs} questions &middot; 90 min &middot; <b style="color:var(--ok)">✓ Completed via Halves (Part 1: ${r.h1Score || ""} + Part 2: ${r.h2Score || ""})</b>${aiTag}`;
+          subDesc = `${totalQs} questions &middot; 90 min &middot; <b style="color:var(--ok)">Completed via Halves (Part 1: ${r.h1Score || ""} + Part 2: ${r.h2Score || ""})</b>${aiTag}`;
         } else {
           subDesc = `${totalQs} questions &middot; ~${ex.duration} min &middot; ${r.pct}% raw &middot; ${r.percentile}${aiTag}`;
         }
@@ -4187,7 +4201,7 @@ function paintHistory() {
         <tr class="${isInc ? "" : "excluded"}" id="row_${rec.id}">
           <td>
             <button class="hist-toggle-btn ${isInc ? 'inc' : 'exc'}" data-id="${rec.id}">
-              ${isInc ? '✓ Included' : '✕ Excluded'}
+              ${isInc ? 'Included' : 'Excluded'}
             </button>
           </td>
           <td style="white-space:nowrap;font-size:12px;color:var(--soft)">${dateStr}</td>
