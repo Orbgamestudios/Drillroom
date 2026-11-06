@@ -2363,6 +2363,8 @@ function gradePracticeExam() {
 
   const histId = "att_" + Date.now() + "_" + Math.floor(Math.random() * 1000);
 
+  const activePE = (typeof PE !== "undefined" && PE) ? PE : (pe || (E && E._peRef));
+
   // Build complete reviewData packet
   const reviewData = {
     id: histId,
@@ -2415,14 +2417,29 @@ function gradePracticeExam() {
         return acc;
       }, {}),
       answerChangeAudit: {
-        totalChanges: PE._answerChanges ? PE._answerChanges.length : 0,
-        rightToWrong: PE._answerChanges ? PE._answerChanges.filter(c => c.wasCorrect && !c.nowCorrect).length : 0,
-        wrongToRight: PE._answerChanges ? PE._answerChanges.filter(c => !c.wasCorrect && c.nowCorrect).length : 0
+        totalChanges: (activePE && activePE._answerChanges) ? activePE._answerChanges.length : 0,
+        rightToWrong: (activePE && activePE._answerChanges) ? activePE._answerChanges.filter(c => c.wasCorrect && !c.nowCorrect).length : 0,
+        wrongToRight: (activePE && activePE._answerChanges) ? activePE._answerChanges.filter(c => !c.wasCorrect && c.nowCorrect).length : 0
       },
       archetypeStats: archetypeList,
       timeSinkQuestions: timeSinkQuestions
     }
   };
+
+  // Attach complete reviewData and telemetry directly to active session handles
+  E._reviewData = reviewData;
+  E._telemetry = reviewData.telemetry;
+  E._passageStats = passageStats;
+  E._decomposedQTimes = decomposedQTimes;
+  if (activePE) {
+    activePE._reviewData = reviewData;
+    activePE._telemetry = reviewData.telemetry;
+    activePE._passageStats = passageStats;
+    activePE._decomposedQTimes = decomposedQTimes;
+  }
+  if (typeof window !== "undefined") {
+    window._lastExamReviewData = reviewData;
+  }
 
   peData[pe.exam.id] = {
     ...peData[pe.exam.id],
@@ -2447,6 +2464,7 @@ function gradePracticeExam() {
     timeUsed: timeUsed,
     ts: Date.now(),
     lastReview: reviewData,
+    reviewData: reviewData,
     detail: qs.map((q, k) => {
       const qSkipped = isSk(q, k);
       return {
@@ -3397,8 +3415,11 @@ function openCompletedExamReview(identifier) {
     _isPracticeExam: true,
     _peRef: { exam: { id: reviewData.examId, label: reviewData.label, sec: reviewData.sec, duration: reviewData.duration } },
     _telemetry: reviewData.telemetry,
-    _reviewData: reviewData
+    _reviewData: reviewData,
+    _passageStats: reviewData.passageStats,
+    _decomposedQTimes: reviewData.telemetry ? reviewData.telemetry.qTimes : null
   };
+  window._lastExamReviewData = reviewData;
 
   // Render timing telemetry
   renderTimingTelemetryBox(reviewData);

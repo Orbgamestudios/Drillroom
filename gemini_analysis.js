@@ -192,6 +192,7 @@
     let inTable = false;
     let tableHeaderDone = false;
     let inCode = false;
+    let inExecSummary = false;
 
     for (let i = 0; i < lines.length; i++) {
       const raw = lines[i];
@@ -300,8 +301,29 @@
         }
       }
 
-      // Headings
-      if (stripped.startsWith("# ")) {
+      // Headings & Executive Summary Card Hook
+      if (stripped.startsWith("# Executive Summary") || stripped.startsWith("# ⚡ Executive Summary") || stripped.startsWith("# Quick Summary")) {
+        if (inExecSummary) {
+          out.push("</div>");
+          inExecSummary = false;
+        }
+        const cleanTitle = stripped.replace(/^#\s*(⚡\s*)?/, "").trim();
+        out.push(`
+<div class="gemini-exec-summary-card" style="margin:0 0 22px 0;padding:16px 20px;background:#F8FAFC;border:2px solid #185A9D;border-radius:6px;box-shadow:0 2px 10px rgba(24,90,157,0.08)">
+  <div style="display:flex;align-items:center;justify-content:space-between;border-bottom:1.5px solid #CBD5E1;padding-bottom:8px;margin-bottom:14px">
+    <div style="font-size:15px;font-weight:700;color:#0F3D69;text-transform:uppercase;letter-spacing:0.5px">
+      ${inlineFormat(cleanTitle)}
+    </div>
+    <span style="font-size:11px;font-weight:700;background:#E2E8F0;color:#1E293B;padding:3px 8px;border-radius:3px;letter-spacing:0.5px">READ FIRST</span>
+  </div>
+`);
+        inExecSummary = true;
+        continue;
+      } else if (stripped.startsWith("# ")) {
+        if (inExecSummary) {
+          out.push("</div>");
+          inExecSummary = false;
+        }
         out.push(`<h2 style="font-size:18px;font-weight:700;margin:22px 0 10px;color:var(--nav);border-bottom:2px solid var(--line);padding-bottom:6px;display:flex;align-items:center;gap:8px">${inlineFormat(stripped.slice(2))}</h2>`);
         continue;
       } else if (stripped.startsWith("## ")) {
@@ -311,6 +333,11 @@
         out.push(`<h4 style="font-size:13.5px;font-weight:700;margin:12px 0 6px;color:#2E6DA4">${inlineFormat(stripped.slice(4))}</h4>`);
         continue;
       } else if (stripped.startsWith("---")) {
+        if (inExecSummary) {
+          out.push("</div>");
+          inExecSummary = false;
+          continue;
+        }
         out.push('<hr style="border:none;border-top:1px solid var(--line);margin:18px 0">');
         continue;
       }
@@ -323,6 +350,7 @@
     if (inList) out.push(`</${listType}>`);
     if (inTable) out.push("</table>");
     if (inCode) out.push("</code></pre>");
+    if (inExecSummary) out.push("</div>");
 
     return out.join("\n");
   }
@@ -390,7 +418,7 @@
       reviewText = reviewItems.map(item => {
         return `### Question ${item.number} (${item.archetype} &bull; ${item.topic})
 - **Status:** ${item.isCorrect ? "CORRECT (but unconfident: " + item.confidence + ")" : "INCORRECT (picked: " + item.picked + ")"}
-- **Time Spent on Question:** ${item.timeSpent} seconds ${item.timeSpent >= 110 ? "(TIME SINK / SUNK COST)" : ""}
+- **Pure Question Answering Time:** ${item.timeSpent} seconds ${item.timeSpent >= 110 ? "(TIME SINK / SUNK COST)" : ""}
 - **Confidence Stated:** ${item.confidence}
 - **Stem:** ${item.stem}
 - **Choices:** ${item.choices}
@@ -403,19 +431,43 @@
 
     // Telemetry & Timing summary block
     let timingSection = "";
-    const pKeys = Object.keys(info.passageStats || {});
-    if (pKeys.length > 0) {
+    let pList = [];
+    if (Array.isArray(info.passageStats)) {
+      pList = info.passageStats;
+    } else if (info.passageStats && typeof info.passageStats === "object") {
+      pList = Object.values(info.passageStats);
+    }
+
+    if (pList.length > 0) {
       timingSection += "\n### Passage Reading Telemetry & Speed (WPM):\n";
       let totalPReadSecs = 0;
-      pKeys.forEach((pk, idx) => {
-        const ps = info.passageStats[pk];
+      let scoredPassageCount = 0;
+      pList.forEach((ps, idx) => {
         const s = ps.seconds || ps.readSec || ps.elapsedSec || 0;
-        totalPReadSecs += s;
-        timingSection += `- **Passage ${idx + 1}:** Reading Time: **${Math.floor(s / 60)}m ${String(s % 60).padStart(2, "0")}s** | Word Count: ${ps.wordCount || 700} words | Reading Speed: **${ps.wpm || Math.round((ps.wordCount || 700) / (Math.max(1, s) / 60))} WPM**\n`;
+        const words = ps.wordCount || 550;
+        const wpm = ps.wpm || (s > 0 ? Math.round((words / s) * 60) : 0);
+        if (ps.isSkipped) {
+          timingSection += `- **Passage ${idx + 1}:** ${words} words | (Skipped by user)\n`;
+        } else {
+          totalPReadSecs += s;
+          scoredPassageCount++;
+          timingSection += `- **Passage ${idx + 1}:** Reading Time: **${Math.floor(s / 60)}m ${String(s % 60).padStart(2, "0")}s** (${s}s) | Word Count: ${words} words | Reading Speed: **${wpm} WPM**\n`;
+        }
       });
-      const avgPRead = Math.round(totalPReadSecs / pKeys.length);
-      timingSection += `*Average Passage Reading Time:* **${Math.floor(avgPRead / 60)}m ${String(avgPRead % 60).padStart(2, "0")}s** (AAMC Benchmark: 3:00–4:00).\n`;
+      if (scoredPassageCount > 0) {
+        const avgPRead = Math.round(totalPReadSecs / scoredPassageCount);
+        const unskippedList = pList.filter(p => !p.isSkipped && (p.readSec || p.seconds || p.elapsedSec) > 0);
+        const avgWpm = unskippedList.length > 0
+          ? Math.round(unskippedList.reduce((sum, p) => sum + (p.wpm || (p.readSec > 0 ? Math.round((p.wordCount / p.readSec) * 60) : 0)), 0) / unskippedList.length)
+          : 0;
+        timingSection += `*Average Passage Reading Time:* **${Math.floor(avgPRead / 60)}m ${String(avgPRead % 60).padStart(2, "0")}s** | *Average Reading Pace:* **${avgWpm} WPM** (AAMC Benchmark: 3:00–4:00, 200–260 WPM).\n`;
+      }
     }
+
+    timingSection += `\n> **CRITICAL PACING CONTEXT FOR EVALUATION:**
+> - The Question Answering Times and Archetype averages listed below reflect PURE question-answering time (passage reading duration has already been isolated into the Passage Reading section above).
+> - Do NOT confuse passage reading duration with question answering time; for example, if the student spent ~3–4 minutes reading Passage 2, that time is tracked under Passage 2, NOT under Question 7.
+> - The student's actual net question solving speed is fast and decisive (~${info.avgQSec || 55}s/question across scored questions; AAMC benchmark is ~90s). Cite the exact WPM and question timing numbers provided above.\n`;
 
     if (info.archetypeList && info.archetypeList.length > 0) {
       timingSection += `\n### Question Archetype Timing & Accuracy Breakdown:
@@ -468,6 +520,26 @@ ${reviewText}
 ### INSTRUCTIONS:
 Generate a thorough, high-impact, and empowering MCAT Diagnostic Report structured with the following exact Markdown headers:
 
+CRITICAL REQUIREMENT: The student wants an immediate, high-yield summary right at the top so they can know their top priorities in under 30 seconds without reading through the full diagnostic.
+You MUST begin your response with this exact Executive Summary block:
+
+# Executive Summary: What You Most Need to Work On
+(Keep this upfront summary ultra-concise, scannable, and under 150 words total)
+
+> [!IMPORTANT]
+> **Priority Focus / #1 Blindspot:** [1 clear, uncompromising sentence pinpointing the specific conceptual gap, distractor trap, or cognitive error that dropped the most points in this section.]
+> 
+> **Pacing Reality:** [1 clear sentence summarizing their true pacing — citing their net question solving speed of ~${info.avgQSec || 55}s/question and passage reading pace, noting that timing is sound and where to maintain discipline.]
+> 
+> **#1 Rule for Your Next Section:** [1 punchy, memorable test-taking rule to deploy immediately on their next passage or section.]
+
+### Quick Priority Punch List
+- **What Dropped Points:** [1–2 crisp sentences diagnosing the root cause behind their misses/guesses.]
+- **What Succeeded:** [1 sentence validating genuine mastery, strong comprehension, and uninflated accuracy.]
+- **Immediate Action Item:** [1 specific drill or rule to execute immediately.]
+
+---
+
 # 1. Executive Score Diagnostic & Metacognitive Calibration
 - Diagnose their scaled score (${info.scaledScore}/132) against competitive medical school thresholds (500 median, 510 competitive, 515+ top tier).
 - Perform a calibration audit:
@@ -515,9 +587,21 @@ Give the student a prioritized checklist of 3–4 ultra-specific topics, equatio
     const qs = E.s.qs;
     const total = qs.length;
 
+    // 1. Locate reviewData from any active session handle
+    let reviewData = E._reviewData || (E._peRef && E._peRef._reviewData) || (window.PE && window.PE._reviewData) || window._lastExamReviewData;
+    if (!reviewData && pe && pe.exam) {
+      try {
+        const peKey = "drillroom_pe_v1";
+        const peData = JSON.parse(localStorage.getItem(peKey)) || {};
+        if (peData[pe.exam.id]) {
+          reviewData = peData[pe.exam.id].lastReview || peData[pe.exam.id].reviewData;
+        }
+      } catch (e) {}
+    }
+
     let right = 0, lucky = 0, shaky = 0, skippedCount = 0;
     qs.forEach((q, k) => {
-      const isSk = q._isSkipped || q.isSkipped || E.ans[k] === -1 || E.conf[k] === "skipped" || (E._reviewData && E._reviewData.qs && E._reviewData.qs[k] && E._reviewData.qs[k].isSkipped);
+      const isSk = q._isSkipped || q.isSkipped || E.ans[k] === -1 || (E.conf && E.conf[k] === "skipped") || (reviewData && reviewData.qs && reviewData.qs[k] && reviewData.qs[k].isSkipped);
       if (isSk) {
         skippedCount++;
         return;
@@ -528,7 +612,7 @@ Give the student a prioritized checklist of 3–4 ultra-specific topics, equatio
       if (ok && E.conf[k] === "two") shaky++;
     });
 
-    const scoredTotal = total - skippedCount;
+    let scoredTotal = total - skippedCount;
     let solid = right - lucky - shaky;
     let wrong = Math.max(0, scoredTotal - right);
     let pct = scoredTotal > 0 ? Math.round((right / scoredTotal) * 100) : 0;
@@ -540,19 +624,21 @@ Give the student a prioritized checklist of 3–4 ultra-specific topics, equatio
       percentile = res.ptile;
     }
 
-    // Safety fallback: if reviewData is attached, respect known score metrics if calculated right was 0 but recorded rawScore was > 0
-    if (E._reviewData) {
-      const revScoredTotal = E._reviewData.scoredTotal !== undefined ? E._reviewData.scoredTotal : (total - (E._reviewData.skippedCount || 0));
-      if (typeof E._reviewData.rawScore === "number" && (right === 0 && E._reviewData.rawScore > 0)) {
-        right = E._reviewData.rawScore;
+    // Safety fallback: if reviewData is attached, respect known score metrics
+    if (reviewData) {
+      const revScoredTotal = reviewData.scoredTotal !== undefined ? reviewData.scoredTotal : (total - (reviewData.skippedCount || 0));
+      if (typeof reviewData.rawScore === "number" && (right === 0 && reviewData.rawScore > 0)) {
+        right = reviewData.rawScore;
         wrong = Math.max(0, revScoredTotal - right);
-        pct = E._reviewData.pct || (revScoredTotal > 0 ? Math.round((right / revScoredTotal) * 100) : 0);
+        pct = reviewData.pct || (revScoredTotal > 0 ? Math.round((right / revScoredTotal) * 100) : 0);
       }
-      if (typeof E._reviewData.solid === "number" && E._reviewData.solid > 0) solid = E._reviewData.solid;
-      if (typeof E._reviewData.lucky === "number" && E._reviewData.lucky > 0) lucky = E._reviewData.lucky;
-      if (typeof E._reviewData.shaky === "number" && E._reviewData.shaky > 0) shaky = E._reviewData.shaky;
-      if (typeof E._reviewData.scaledScore === "number" && E._reviewData.scaledScore > 0) scaledScore = E._reviewData.scaledScore;
-      if (E._reviewData.percentile) percentile = E._reviewData.percentile;
+      if (typeof reviewData.solid === "number" && reviewData.solid > 0) solid = reviewData.solid;
+      if (typeof reviewData.lucky === "number" && reviewData.lucky > 0) lucky = reviewData.lucky;
+      if (typeof reviewData.shaky === "number" && reviewData.shaky > 0) shaky = reviewData.shaky;
+      if (typeof reviewData.scaledScore === "number" && reviewData.scaledScore > 0) scaledScore = reviewData.scaledScore;
+      if (reviewData.percentile) percentile = reviewData.percentile;
+      if (typeof reviewData.skippedCount === "number") skippedCount = reviewData.skippedCount;
+      if (typeof reviewData.scoredTotal === "number") scoredTotal = reviewData.scoredTotal;
     }
 
     const examId = isPracticeExam && pe && pe.exam ? pe.exam.id : (E.s.id || "drill_" + Date.now());
@@ -561,20 +647,37 @@ Give the student a prioritized checklist of 3–4 ultra-specific topics, equatio
     const duration = isPracticeExam && pe && pe.exam ? pe.exam.duration : Math.round((total * 1.6));
     const modeName = isPracticeExam ? `${duration}-Min Timed Section` : "Targeted Drill Set";
 
-    // Extract telemetry metrics
-    const telemetry = E._telemetry || {};
-    const qTimes = telemetry.qTimes || E._qTimes || Array(total).fill(0);
-    const passageStats = telemetry.passageReadState || E._passageReadState || {};
-    const answerChangeAudit = telemetry.answerChangeAudit || (E._answerChanges ? {
+    // 2. Extract or calculate decomposed timing and telemetry
+    const telemetry = (reviewData && reviewData.telemetry) ? reviewData.telemetry : (E._telemetry || {});
+    let decomposedQTimes = (telemetry && telemetry.qTimes) ? telemetry.qTimes : (E._decomposedQTimes || null);
+    let passageStats = (reviewData && reviewData.passageStats) ? reviewData.passageStats : ((telemetry && telemetry.passageReadState) ? telemetry.passageReadState : (E._passageStats || null));
+
+    // Dynamic decomposition fallback if passage stats or decomposed times were not attached
+    if ((!decomposedQTimes || !passageStats) && typeof window.calculatePassageReadingTelemetry === "function") {
+      const calcResult = window.calculatePassageReadingTelemetry(pe || { _passageTelemetry: (window.PE && window.PE._passageTelemetry) || E._passageTelemetry, _qTimes: (window.PE && window.PE._qTimes) || E._qTimes, exam: { sec } }, qs);
+      if (calcResult) {
+        if (!decomposedQTimes) decomposedQTimes = calcResult.decomposedQTimes;
+        if (!passageStats) passageStats = calcResult.passageStats;
+        if (!telemetry.qTimes) telemetry.qTimes = calcResult.decomposedQTimes;
+        if (!telemetry.rawQTimes) telemetry.rawQTimes = calcResult.rawQTimes;
+      }
+    }
+
+    const qTimes = decomposedQTimes || telemetry.qTimes || E._qTimes || Array(total).fill(0);
+    if (!passageStats) {
+      passageStats = telemetry.passageReadState || E._passageReadState || {};
+    }
+
+    const answerChangeAudit = (telemetry && telemetry.answerChangeAudit) || (E._answerChanges ? {
       totalChanges: E._answerChanges.length,
       rightToWrong: E._answerChanges.filter(c => c.wasCorrect && !c.nowCorrect).length,
       wrongToRight: E._answerChanges.filter(c => !c.wasCorrect && c.nowCorrect).length
     } : { totalChanges: 0, rightToWrong: 0, wrongToRight: 0 });
 
-    // Archetype breakdown
+    // Archetype breakdown using decomposed question times
     const archetypesMap = {};
     qs.forEach((q, idx) => {
-      const isSk = q._isSkipped || q.isSkipped || E.ans[idx] === -1 || E.conf[idx] === "skipped" || (E._reviewData && E._reviewData.qs && E._reviewData.qs[idx] && E._reviewData.qs[idx].isSkipped);
+      const isSk = q._isSkipped || q.isSkipped || E.ans[idx] === -1 || (E.conf && E.conf[idx] === "skipped") || (reviewData && reviewData.qs && reviewData.qs[idx] && reviewData.qs[idx].isSkipped);
       if (isSk) return;
       const arch = (typeof window.getQuestionArchetype === "function")
         ? window.getQuestionArchetype(q, sec)
@@ -594,19 +697,29 @@ Give the student a prioritized checklist of 3–4 ultra-specific topics, equatio
       if (E.conf && E.conf[idx] === "guess") archetypesMap[arch].guessCount++;
     });
 
-    const archetypeList = telemetry.archetypeStats || Object.values(archetypesMap).map(a => ({
+    const archetypeList = (telemetry && telemetry.archetypeStats) ? telemetry.archetypeStats : Object.values(archetypesMap).map(a => ({
       ...a,
-      avgSecs: Math.round(a.totalSecs / a.total),
-      acc: Math.round((a.right / a.total) * 100)
+      avgSecs: a.total > 0 ? Math.round(a.totalSecs / a.total) : 0,
+      acc: a.total > 0 ? Math.round((a.right / a.total) * 100) : 0
     }));
 
-    const timeSinkQuestions = telemetry.timeSinkQuestions || qs.map((q, idx) => ({
+    // Calculate pure average question answering time across scored questions
+    const scoredQIndices = [];
+    qs.forEach((q, idx) => {
+      const isSk = q._isSkipped || q.isSkipped || E.ans[idx] === -1 || (E.conf && E.conf[idx] === "skipped") || (reviewData && reviewData.qs && reviewData.qs[idx] && reviewData.qs[idx].isSkipped);
+      if (!isSk) scoredQIndices.push(idx);
+    });
+    const totalNetQSec = scoredQIndices.reduce((sum, idx) => sum + (qTimes[idx] || 0), 0);
+    const avgQSec = scoredQIndices.length > 0 ? Math.round(totalNetQSec / scoredQIndices.length) : 60;
+
+    const timeSinkQuestions = (telemetry && telemetry.timeSinkQuestions) ? telemetry.timeSinkQuestions : qs.map((q, idx) => ({
       number: idx + 1,
       seconds: qTimes[idx] || 0,
       isCorrect: E.ans[idx] === q.a,
+      isSkipped: q._isSkipped || q.isSkipped || E.ans[idx] === -1 || (E.conf && E.conf[idx] === "skipped"),
       archetype: (typeof window.getQuestionArchetype === "function") ? window.getQuestionArchetype(q, sec) : "Conceptual",
-      conf: E.conf ? E.conf[idx] : "unrated"
-    })).filter(x => x.seconds >= 110);
+      conf: (E.conf && E.conf[idx]) ? E.conf[idx] : "unrated"
+    })).filter(x => !x.isSkipped && x.seconds >= 110);
 
     return {
       examId,
@@ -631,7 +744,8 @@ Give the student a prioritized checklist of 3–4 ultra-specific topics, equatio
       passageStats,
       archetypeList,
       answerChangeAudit,
-      timeSinkQuestions
+      timeSinkQuestions,
+      avgQSec
     };
   }
 
@@ -847,7 +961,7 @@ Give the student a prioritized checklist of 3–4 ultra-specific topics, equatio
         } else if (elapsedSec >= sEnd) {
           // Complete
           if (bar) bar.style.width = "100%";
-          if (statusEl) { statusEl.textContent = "✓ Complete"; statusEl.style.color = "#1B7A38"; }
+          if (statusEl) { statusEl.textContent = "Complete"; statusEl.style.color = "#1B7A38"; }
           if (row) { row.classList.remove("active"); row.classList.add("complete"); }
           totalPct += 20;
         } else {
@@ -890,7 +1004,7 @@ Give the student a prioritized checklist of 3–4 ultra-specific topics, equatio
         const bar = document.getElementById(s.id + "_bar");
         const statusEl = row ? row.querySelector(".pe-stage-status") : null;
         if (bar) bar.style.width = "100%";
-        if (statusEl) { statusEl.textContent = "✓ Complete"; statusEl.style.color = "#1B7A38"; }
+        if (statusEl) { statusEl.textContent = "Complete"; statusEl.style.color = "#1B7A38"; }
         if (row) { row.classList.remove("active"); row.classList.add("complete"); }
       });
       const overallBar = document.getElementById("peAiOverallBar");
@@ -898,7 +1012,7 @@ Give the student a prioritized checklist of 3–4 ultra-specific topics, equatio
       const overallSub = document.getElementById("peAiOverallSub");
       if (overallBar) overallBar.style.width = "100%";
       if (overallPct) overallPct.textContent = "100%";
-      if (overallSub) overallSub.textContent = `✓ Diagnostic generated in ${elapsed}s!`;
+      if (overallSub) overallSub.textContent = `Diagnostic generated in ${elapsed}s!`;
 
       // Brief transition delay so the user experiences the satisfaction of 100% complete
       await new Promise(r => setTimeout(r, 350));
@@ -965,7 +1079,7 @@ Give the student a prioritized checklist of 3–4 ultra-specific topics, equatio
       copyBtn.onclick = () => {
         navigator.clipboard.writeText(markdownText).then(() => {
           const orig = copyBtn.textContent;
-          copyBtn.textContent = "✓ Copied!";
+          copyBtn.textContent = "Copied!";
           setTimeout(() => { copyBtn.textContent = orig; }, 2000);
         });
       };
@@ -1100,7 +1214,7 @@ Give the student a prioritized checklist of 3–4 ultra-specific topics, equatio
         if (detected.length) {
           modelSelect.innerHTML = detected.map(m => `<option value="${m.id}">${m.name}</option>`).join("") +
             '<option value="custom">Custom Model ID...</option>';
-          statusDiv.innerHTML = `<span style="color:var(--ok);font-weight:600">✓ Found ${detected.length} compatible models! Selected: ${modelSelect.value}</span>`;
+          statusDiv.innerHTML = `<span style="color:var(--ok);font-weight:600">Found ${detected.length} compatible models! Selected: ${modelSelect.value}</span>`;
         } else {
           statusDiv.innerHTML = '<span style="color:var(--warn)">Could not auto-list models (endpoint query failed or key is limited). Standard models remain ready.</span>';
         }
@@ -1119,9 +1233,9 @@ Give the student a prioritized checklist of 3–4 ultra-specific topics, equatio
       statusDiv.innerHTML = `<span style="color:var(--selBd)">Pinging Gemini API with <code>${escapeHtml(targetModel)}</code>...</span>`;
       const res = await testGeminiKey(key, targetModel);
       if (res.success) {
-        statusDiv.innerHTML = `<span style="color:var(--ok);font-weight:600">✓ Connection successful! (${res.modelUsed} responded)</span>`;
+        statusDiv.innerHTML = `<span style="color:var(--ok);font-weight:600">Connection successful! (${res.modelUsed} responded)</span>`;
       } else {
-        statusDiv.innerHTML = `<span style="color:var(--bad);font-weight:600">✗ Error: ${escapeHtml(res.error)}</span>`;
+        statusDiv.innerHTML = `<span style="color:var(--bad);font-weight:600">Error: ${escapeHtml(res.error)}</span>`;
       }
     };
 
