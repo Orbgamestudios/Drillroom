@@ -1,0 +1,1343 @@
+/* ---- performance_charts.js ---- */
+/* Interactive MCAT Performance Analytics & Telemetry Charting Engine
+   - Retroactive calculation across all previous sessions and passages
+   - Dual-scope navigation: Across All Sessions vs Within Single Session (Passage-by-Passage)
+   - Dynamic axis customization (X: Sessions, Dates, Passages, Questions; Y: Reading Time, WPM, Scaled Score, Accuracy, Question Pace, Fatigue Delta, etc.)
+   - High-DPI Canvas visualizer with AAMC target benchmark zones and interactive tooltips
+   - One-click Chart Image Download (PNG) & CSV Export
+   - Direct Gemini AI Trend Analysis & Follow-Up Q&A
+*/
+
+(function() {
+  "use strict";
+
+  /* ===== METRIC REGISTRY ===== */
+  const METRIC_DEFS = {
+    // ACROSS SESSIONS (Trajectory)
+    avgPassageReadSec: {
+      id: "avgPassageReadSec",
+      scope: "across",
+      label: "Avg Passage Reading Time",
+      shortLabel: "Reading Time",
+      unit: "s",
+      formatVal: (v) => `${Math.floor(v / 60)}m ${String(Math.round(v % 60)).padStart(2, "0")}s (${Math.round(v)}s)`,
+      formatTick: (v) => `${Math.floor(v / 60)}m ${String(Math.round(v % 60)).padStart(2, "0")}s`,
+      benchmark: { min: 180, max: 240, label: "AAMC Benchmark (3:00 - 4:00)" },
+      desc: "Average time spent reading passages before starting questions.",
+      lowerIsBetter: false // optimal is within benchmark
+    },
+    avgPassageWpm: {
+      id: "avgPassageWpm",
+      scope: "across",
+      label: "Avg Passage Reading Speed (WPM)",
+      shortLabel: "Reading Pace",
+      unit: "WPM",
+      formatVal: (v) => `${Math.round(v)} WPM`,
+      formatTick: (v) => `${Math.round(v)} WPM`,
+      benchmark: { min: 200, max: 260, label: "AAMC Target (200 - 260 WPM)" },
+      desc: "Average analytical reading speed across scored passages.",
+      higherIsBetter: true
+    },
+    scaledScore: {
+      id: "scaledScore",
+      scope: "across",
+      label: "MCAT Scaled Score (118 - 132)",
+      shortLabel: "Scaled Score",
+      unit: "scaled",
+      formatVal: (v) => `${Math.round(v)} / 132`,
+      formatTick: (v) => `${Math.round(v)}`,
+      benchmark: { line: 128, label: "Competitive Threshold (128+)" },
+      desc: "MCAT section scaled score projection.",
+      higherIsBetter: true
+    },
+    pct: {
+      id: "pct",
+      scope: "across",
+      label: "Raw Accuracy (%)",
+      shortLabel: "Accuracy",
+      unit: "%",
+      formatVal: (v) => `${Math.round(v)}%`,
+      formatTick: (v) => `${Math.round(v)}%`,
+      benchmark: { line: 80, label: "Target (80%+)" },
+      desc: "Percentage of scored questions answered correctly.",
+      higherIsBetter: true
+    },
+    avgQSec: {
+      id: "avgQSec",
+      scope: "across",
+      label: "Avg Pure Question Solving Time",
+      shortLabel: "Question Pace",
+      unit: "s",
+      formatVal: (v) => `${Math.round(v)}s / question`,
+      formatTick: (v) => `${Math.round(v)}s`,
+      benchmark: { min: 45, max: 80, label: "Optimal Pace (45 - 80s)" },
+      desc: "Pure time spent answering questions (excluding passage reading dwell).",
+      lowerIsBetter: true
+    },
+    solidRatio: {
+      id: "solidRatio",
+      scope: "across",
+      label: "Solid Mastery Ratio (%)",
+      shortLabel: "Solid Ratio",
+      unit: "%",
+      formatVal: (v) => `${Math.round(v)}% solid`,
+      formatTick: (v) => `${Math.round(v)}%`,
+      benchmark: { line: 85, label: "Target (85%+ unguessable)" },
+      desc: "Percentage of correct answers where you stated high confidence rather than a guess.",
+      higherIsBetter: true
+    },
+    guessCount: {
+      id: "guessCount",
+      scope: "across",
+      label: "Total Guesses & Coin Flips",
+      shortLabel: "Guesses",
+      unit: "guesses",
+      formatVal: (v) => `${Math.round(v)} guesses`,
+      formatTick: (v) => `${Math.round(v)}`,
+      desc: "Total questions marked 50/50 coin flip or wild guess.",
+      lowerIsBetter: true
+    },
+    netSecondGuessing: {
+      id: "netSecondGuessing",
+      scope: "across",
+      label: "Second-Guessing Net Impact",
+      shortLabel: "Net Impact",
+      unit: "pts",
+      formatVal: (v) => `${v > 0 ? "+" + v : v} points`,
+      formatTick: (v) => `${v > 0 ? "+" + v : v}`,
+      benchmark: { line: 0, label: "Break-even (0)" },
+      desc: "Net score changes resulting from switching answers (wrong-to-right minus right-to-wrong).",
+      higherIsBetter: true
+    },
+    timeUsedMinutes: {
+      id: "timeUsedMinutes",
+      scope: "across",
+      label: "Total Section Elapsed Time",
+      shortLabel: "Elapsed Time",
+      unit: "min",
+      formatVal: (v) => `${Math.round(v)} min`,
+      formatTick: (v) => `${Math.round(v)}m`,
+      desc: "Total duration spent completing the practice section.",
+      lowerIsBetter: true
+    },
+
+    // WITHIN SINGLE SESSION (Passage-by-Passage)
+    passageReadSec: {
+      id: "passageReadSec",
+      scope: "within_passage",
+      label: "Passage Reading Time",
+      shortLabel: "Reading Time",
+      unit: "s",
+      formatVal: (v) => `${Math.floor(v / 60)}m ${String(Math.round(v % 60)).padStart(2, "0")}s (${Math.round(v)}s)`,
+      formatTick: (v) => `${Math.floor(v / 60)}m ${String(Math.round(v % 60)).padStart(2, "0")}s`,
+      benchmark: { min: 180, max: 240, label: "AAMC Benchmark (3:00 - 4:00)" },
+      desc: "Time spent reading this passage before committing to questions."
+    },
+    passageWpm: {
+      id: "passageWpm",
+      scope: "within_passage",
+      label: "Passage Reading Speed (WPM)",
+      shortLabel: "Reading Pace",
+      unit: "WPM",
+      formatVal: (v) => `${Math.round(v)} WPM`,
+      formatTick: (v) => `${Math.round(v)} WPM`,
+      benchmark: { min: 200, max: 260, label: "AAMC Target (200 - 260 WPM)" },
+      desc: "Analytical words per minute on this passage text."
+    },
+    passageWordCount: {
+      id: "passageWordCount",
+      scope: "within_passage",
+      label: "Passage Word Count",
+      shortLabel: "Word Count",
+      unit: "words",
+      formatVal: (v) => `${Math.round(v)} words`,
+      formatTick: (v) => `${Math.round(v)}w`,
+      desc: "Length and text density of the passage."
+    },
+    passageAccuracy: {
+      id: "passageAccuracy",
+      scope: "within_passage",
+      label: "Passage Question Accuracy (%)",
+      shortLabel: "Accuracy",
+      unit: "%",
+      formatVal: (v) => `${Math.round(v)}%`,
+      formatTick: (v) => `${Math.round(v)}%`,
+      benchmark: { line: 80, label: "Target (80%+)" },
+      desc: "Percentage of questions answered correctly for this passage set."
+    },
+    passageAvgQTime: {
+      id: "passageAvgQTime",
+      scope: "within_passage",
+      label: "Avg Question Time on Passage",
+      shortLabel: "Question Pace",
+      unit: "s",
+      formatVal: (v) => `${Math.round(v)}s / Q`,
+      formatTick: (v) => `${Math.round(v)}s`,
+      benchmark: { min: 45, max: 80, label: "Target Pace (45 - 80s)" },
+      desc: "Average solving duration per question on this passage."
+    },
+    passageTotalTime: {
+      id: "passageTotalTime",
+      scope: "within_passage",
+      label: "Total Passage Set Duration",
+      shortLabel: "Total Time",
+      unit: "s",
+      formatVal: (v) => `${Math.floor(v / 60)}m ${String(Math.round(v % 60)).padStart(2, "0")}s`,
+      formatTick: (v) => `${Math.floor(v / 60)}m ${String(Math.round(v % 60)).padStart(2, "0")}s`,
+      benchmark: { min: 480, max: 600, label: "Budget (8:00 - 10:00)" },
+      desc: "Combined reading and solving time for this entire passage set."
+    },
+    passageGuesses: {
+      id: "passageGuesses",
+      scope: "within_passage",
+      label: "Guesses / Coin Flips on Passage",
+      shortLabel: "Guesses",
+      unit: "guesses",
+      formatVal: (v) => `${Math.round(v)} guesses`,
+      formatTick: (v) => `${Math.round(v)}`,
+      desc: "Questions answered via 50/50 or guessing on this passage."
+    },
+    passageFatigueDelta: {
+      id: "passageFatigueDelta",
+      scope: "within_passage",
+      label: "Fatigue Delta vs Passage 1",
+      shortLabel: "Fatigue Delta",
+      unit: "s",
+      formatVal: (v) => `${v > 0 ? "+" + Math.round(v) : Math.round(v)}s vs P1`,
+      formatTick: (v) => `${v > 0 ? "+" + Math.round(v) : Math.round(v)}s`,
+      benchmark: { line: 0, label: "Baseline (P1)" },
+      desc: "Reading duration difference compared to Passage 1 (positive values indicate slowing from fatigue)."
+    },
+
+    // WITHIN SINGLE SESSION (Question-by-Question)
+    qTime: {
+      id: "qTime",
+      scope: "within_question",
+      label: "Question Solving Time (Pure)",
+      shortLabel: "Question Time",
+      unit: "s",
+      formatVal: (v) => `${Math.round(v)} seconds`,
+      formatTick: (v) => `${Math.round(v)}s`,
+      benchmark: { min: 45, max: 90, label: "Target (45 - 90s)" },
+      desc: "Pure time spent solving this specific question (passage reading decoupled)."
+    },
+    qOutcomeScore: {
+      id: "qOutcomeScore",
+      scope: "within_question",
+      label: "Confidence & Mastery Outcome",
+      shortLabel: "Mastery Level",
+      unit: "lvl",
+      formatVal: (v) => v === 3 ? "Solid Correct" : v === 2 ? "Shaky Correct (50/50)" : v === 1 ? "Lucky Guess" : "Missed",
+      formatTick: (v) => v === 3 ? "Solid" : v === 2 ? "50/50" : v === 1 ? "Guess" : "Miss",
+      desc: "Mastery tier: 3 = Solid Correct, 2 = 50/50 Correct, 1 = Lucky Guess, 0 = Missed."
+    }
+  };
+
+  /* ===== CHART STATE ===== */
+  const chartState = {
+    scope: "across", // "across" | "within"
+    selectedSessionId: null,
+    acrossX: "session", // "session" | "date"
+    acrossY: "avgPassageReadSec",
+    withinX: "passage", // "passage" | "question"
+    withinY: "passageReadSec",
+    subjectFilter: "all", // "all", "C/P", "CARS", "B/B", "P/S"
+    durationFilter: "all", // "all", "90", "45", "60"
+    hoverIndex: -1,
+    aiPanelOpen: false,
+    aiAnalysisText: null,
+    aiChatHistory: []
+  };
+
+  /* ===== RETROACTIVE STATS ENRICHMENT ===== */
+  function enrichSessionWithStats(rec) {
+    if (!rec) return null;
+
+    // 1. Recover passageStats from reviewData, rec.passageStats, or peData
+    let pStats = (rec.reviewData && rec.reviewData.passageStats) ? rec.reviewData.passageStats : (rec.passageStats || null);
+
+    if ((!pStats || !pStats.length) && typeof localStorage !== "undefined") {
+      try {
+        const peData = JSON.parse(localStorage.getItem("drillroom_pe_v1")) || {};
+        if (peData[rec.examId]?.lastReview?.passageStats) {
+          pStats = peData[rec.examId].lastReview.passageStats;
+        }
+      } catch (e) {}
+    }
+
+    // 2. Dynamic Retroactive Reconstruction for Older Legacy Attempts
+    const examRegistry = (typeof PRACTICE_EXAMS !== "undefined" && Array.isArray(PRACTICE_EXAMS) && PRACTICE_EXAMS.length)
+      ? PRACTICE_EXAMS
+      : ((typeof window !== "undefined" && Array.isArray(window.PRACTICE_EXAMS)) ? window.PRACTICE_EXAMS : []);
+
+    if ((!pStats || !pStats.length) && examRegistry.length) {
+      const ex = examRegistry.find(e => e.id === rec.examId);
+      if (ex && ex.sets && ex.sets.length) {
+        pStats = [];
+        const totalWords = ex.sets.reduce((sum, s) => {
+          const text = (s.passage || "").replace(/<[^>]+>/g, " ").trim();
+          return sum + (text.split(/\s+/).filter(Boolean).length || 550);
+        }, 0);
+
+        const targetWpm = rec.sec === "CARS" ? 215 : (rec.sec === "P/S" ? 200 : 185);
+        const estTotalReadSec = Math.round((totalWords / targetWpm) * 60);
+        const sessionSec = (rec.timeUsed && rec.timeUsed > 60) ? rec.timeUsed : (rec.duration ? rec.duration * 60 : 3600);
+        const totalReadSec = Math.min(sessionSec * 0.45, Math.max(ex.sets.length * 60, estTotalReadSec));
+
+        ex.sets.forEach((s, idx) => {
+          const text = (s.passage || "").replace(/<[^>]+>/g, " ").trim();
+          const words = text.split(/\s+/).filter(Boolean).length || 550;
+          const fraction = totalWords > 0 ? (words / totalWords) : (1 / ex.sets.length);
+          const readSec = Math.max(30, Math.round(totalReadSec * fraction));
+          const wpm = readSec > 0 ? Math.round((words / readSec) * 60) : targetWpm;
+          pStats.push({
+            pIndex: idx + 1,
+            setIdx: idx,
+            topic: s.topic || `Passage ${idx + 1}`,
+            wordCount: words,
+            readSec: readSec,
+            seconds: readSec,
+            wpm: wpm,
+            isSkipped: false
+          });
+        });
+      }
+    }
+
+    pStats = pStats || [];
+    const unskippedP = pStats.filter(p => !p.isSkipped && (p.readSec || p.seconds) > 0);
+    const avgPassageReadSec = unskippedP.length > 0
+      ? Math.round(unskippedP.reduce((sum, p) => sum + (p.readSec || p.seconds || 0), 0) / unskippedP.length)
+      : 0;
+    const avgPassageWpm = unskippedP.length > 0
+      ? Math.round(unskippedP.reduce((sum, p) => sum + (p.wpm || (p.readSec > 0 ? Math.round(p.wordCount / (p.readSec / 60)) : 0)), 0) / unskippedP.length)
+      : 0;
+
+    // Pure question solving time
+    const totalReadSec = unskippedP.reduce((sum, p) => sum + (p.readSec || p.seconds || 0), 0);
+    const sessionTotalSec = (rec.timeUsed && rec.timeUsed > 60) ? rec.timeUsed : (rec.duration ? rec.duration * 60 : 3600);
+    const pureQTimeTotal = Math.max(0, sessionTotalSec - totalReadSec);
+    const totalScoredQs = (rec.scoredTotal !== undefined) ? rec.scoredTotal : (rec.totalQs || 1);
+    const avgQSec = totalScoredQs > 0 ? Math.round(pureQTimeTotal / totalScoredQs) : 60;
+
+    // Extract detailed per-passage and per-question telemetry
+    const qsList = rec.reviewData?.qs || [];
+    const exRef = examRegistry.find(e => e.id === rec.examId);
+
+    const enrichedPassages = pStats.map((p, pIdx) => {
+      let pQs = qsList.filter(q => q.setIdx === p.setIdx);
+      if (!pQs.length && exRef && exRef.sets && exRef.sets[p.setIdx]) {
+        const qCount = exRef.sets[p.setIdx].qs ? exRef.sets[p.setIdx].qs.length : 6;
+        const pRight = Math.round(((rec.pct || 75) / 100) * qCount);
+        return {
+          ...p,
+          pNumber: pIdx + 1,
+          totalQs: qCount,
+          right: pRight,
+          acc: Math.round((pRight / qCount) * 100),
+          avgQSec: avgQSec,
+          totalTime: (p.readSec || p.seconds || 0) + (qCount * avgQSec),
+          guesses: Math.round(((rec.lucky || 0) + (rec.shaky || 0)) / Math.max(1, pStats.length))
+        };
+      }
+      const right = pQs.filter(q => q.ans === q.a).length;
+      const guesses = pQs.filter(q => q.conf === "two" || q.conf === "guess").length;
+      const pPureQTime = pQs.reduce((sum, q) => sum + (q.time || avgQSec), 0);
+      const pAvgQTime = pQs.length > 0 ? Math.round(pPureQTime / pQs.length) : avgQSec;
+      return {
+        ...p,
+        pNumber: pIdx + 1,
+        totalQs: pQs.length || 6,
+        right: right,
+        acc: pQs.length > 0 ? Math.round((right / pQs.length) * 100) : (rec.pct || 0),
+        avgQSec: pAvgQTime,
+        totalTime: (p.readSec || p.seconds || 0) + pPureQTime,
+        guesses: guesses
+      };
+    });
+
+    // Fatigue delta vs Passage 1
+    const p1Read = (enrichedPassages[0] && (enrichedPassages[0].readSec || enrichedPassages[0].seconds)) || avgPassageReadSec;
+    enrichedPassages.forEach(p => {
+      p.fatigueDelta = (p.readSec || p.seconds || 0) - p1Read;
+    });
+
+    // Enriched questions list
+    let enrichedQuestions = qsList.map((q, qIdx) => ({
+      qNumber: qIdx + 1,
+      time: q.time || avgQSec,
+      isCorrect: q.ans === q.a,
+      conf: q.conf,
+      outcomeScore: q.ans === q.a ? (q.conf === "sure" ? 3 : (q.conf === "two" ? 2 : 1)) : 0
+    }));
+
+    if (!enrichedQuestions.length) {
+      enrichedQuestions = Array.from({ length: rec.totalQs || 18 }, (_, qi) => {
+        const isRight = qi < (rec.rawScore || 12);
+        const isSolid = qi < (rec.solid || 10);
+        return {
+          qNumber: qi + 1,
+          time: avgQSec,
+          isCorrect: isRight,
+          conf: isSolid ? "sure" : "two",
+          outcomeScore: isSolid ? 3 : (isRight ? 2 : 0)
+        };
+      });
+    }
+
+    return {
+      ...rec,
+      passageStats: enrichedPassages,
+      questions: enrichedQuestions,
+      avgPassageReadSec,
+      avgPassageWpm,
+      avgQSec,
+      solidRatio: rec.rawScore > 0 ? Math.round(((rec.solid || 0) / rec.rawScore) * 100) : 0,
+      guessCount: (rec.lucky || 0) + (rec.shaky || 0),
+      netSecondGuessing: rec.reviewData?.telemetry?.answerChangeAudit
+        ? (rec.reviewData.telemetry.answerChangeAudit.wrongToRight - rec.reviewData.telemetry.answerChangeAudit.rightToWrong)
+        : 0,
+      timeUsedMinutes: Math.round(sessionTotalSec / 60)
+    };
+  }
+
+  function getAllEnrichedSessions() {
+    let hist = [];
+    if (typeof getHistory === "function") {
+      hist = getHistory();
+    } else {
+      try { hist = JSON.parse(localStorage.getItem("drillroom_history_v1")) || []; } catch(e) { hist = []; }
+    }
+    if (!Array.isArray(hist)) hist = [];
+    return hist
+      .map(enrichSessionWithStats)
+      .filter(Boolean)
+      .sort((a, b) => (a.ts || 0) - (b.ts || 0));
+  }
+
+  /* ===== DATA SLICER FOR ACTIVE CONFIGURATION ===== */
+  function getActiveChartDataset() {
+    const allSessions = getAllEnrichedSessions();
+
+    if (chartState.scope === "across") {
+      // Filter sessions
+      let filtered = allSessions;
+      if (chartState.subjectFilter !== "all") {
+        filtered = filtered.filter(s => s.sec === chartState.subjectFilter);
+      }
+      if (chartState.durationFilter !== "all") {
+        if (chartState.durationFilter === "45") {
+          filtered = filtered.filter(s => s.isHalf || String(s.duration) === "45" || (s.examId && s.examId.includes("_h")));
+        } else {
+          filtered = filtered.filter(s => String(s.duration) === String(chartState.durationFilter));
+        }
+      }
+
+      const metricDef = METRIC_DEFS[chartState.acrossY] || METRIC_DEFS.avgPassageReadSec;
+      const points = filtered.map((s, idx) => {
+        let yVal = 0;
+        if (chartState.acrossY === "avgPassageReadSec") yVal = s.avgPassageReadSec;
+        else if (chartState.acrossY === "avgPassageWpm") yVal = s.avgPassageWpm;
+        else if (chartState.acrossY === "scaledScore") yVal = s.scaledScore;
+        else if (chartState.acrossY === "pct") yVal = s.pct;
+        else if (chartState.acrossY === "avgQSec") yVal = s.avgQSec;
+        else if (chartState.acrossY === "solidRatio") yVal = s.solidRatio;
+        else if (chartState.acrossY === "guessCount") yVal = s.guessCount;
+        else if (chartState.acrossY === "netSecondGuessing") yVal = s.netSecondGuessing;
+        else if (chartState.acrossY === "timeUsedMinutes") yVal = s.timeUsedMinutes;
+
+        const d = new Date(s.ts || Date.now());
+        const dateStr = d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+        const label = chartState.acrossX === "date"
+          ? `${dateStr} (${s.sec})`
+          : `S${idx + 1}: ${s.suiteTitle || s.label} (${dateStr})`;
+
+        return {
+          xIndex: idx,
+          label: label,
+          shortLabel: `S${idx + 1} (${s.sec})`,
+          date: dateStr,
+          sec: s.sec,
+          examTitle: s.suiteTitle || s.label,
+          val: yVal,
+          displayVal: metricDef.formatVal(yVal),
+          rawRecord: s
+        };
+      });
+
+      return {
+        scope: "across",
+        metricDef: metricDef,
+        points: points,
+        totalItems: filtered.length,
+        emptyMessage: filtered.length === 0 ? "No completed sections match current subject and duration filters." : null
+      };
+    } else {
+      // WITHIN SINGLE SESSION
+      let targetSession = null;
+      if (chartState.selectedSessionId) {
+        targetSession = allSessions.find(s => s.id === chartState.selectedSessionId);
+      }
+      if (!targetSession && allSessions.length) {
+        targetSession = allSessions[allSessions.length - 1]; // default to most recent session
+        chartState.selectedSessionId = targetSession.id;
+      }
+
+      if (!targetSession) {
+        return {
+          scope: "within",
+          metricDef: METRIC_DEFS.passageReadSec,
+          points: [],
+          totalItems: 0,
+          emptyMessage: "No completed practice sessions available to chart."
+        };
+      }
+
+      if (chartState.withinX === "question") {
+        const metricDef = METRIC_DEFS[chartState.withinY] || METRIC_DEFS.qTime;
+        const qList = targetSession.questions || [];
+        const points = qList.map((q, idx) => {
+          const yVal = chartState.withinY === "qOutcomeScore" ? q.outcomeScore : q.time;
+          return {
+            xIndex: idx,
+            label: `Question ${q.qNumber}`,
+            shortLabel: `Q${q.qNumber}`,
+            val: yVal,
+            displayVal: metricDef.formatVal(yVal),
+            sec: targetSession.sec,
+            examTitle: targetSession.suiteTitle || targetSession.label
+          };
+        });
+
+        return {
+          scope: "within",
+          subScope: "question",
+          session: targetSession,
+          metricDef: metricDef,
+          points: points,
+          totalItems: points.length,
+          emptyMessage: points.length === 0 ? "No question telemetry in this session." : null
+        };
+      } else {
+        // PASSAGE-BY-PASSAGE
+        const metricDef = METRIC_DEFS[chartState.withinY] || METRIC_DEFS.passageReadSec;
+        const pList = targetSession.passageStats || [];
+        const points = pList.map((p, idx) => {
+          let yVal = 0;
+          if (chartState.withinY === "passageReadSec") yVal = p.readSec || p.seconds || 0;
+          else if (chartState.withinY === "passageWpm") yVal = p.wpm || 0;
+          else if (chartState.withinY === "passageWordCount") yVal = p.wordCount || 550;
+          else if (chartState.withinY === "passageAccuracy") yVal = p.acc || 0;
+          else if (chartState.withinY === "passageAvgQTime") yVal = p.avgQSec || 60;
+          else if (chartState.withinY === "passageTotalTime") yVal = p.totalTime || 0;
+          else if (chartState.withinY === "passageGuesses") yVal = p.guesses || 0;
+          else if (chartState.withinY === "passageFatigueDelta") yVal = p.fatigueDelta || 0;
+
+          return {
+            xIndex: idx,
+            label: `Passage ${idx + 1} (${p.topic || 'Passage'})`,
+            shortLabel: `Passage ${idx + 1}`,
+            val: yVal,
+            displayVal: metricDef.formatVal(yVal),
+            sec: targetSession.sec,
+            examTitle: targetSession.suiteTitle || targetSession.label,
+            wordCount: p.wordCount,
+            rawPassage: p
+          };
+        });
+
+        return {
+          scope: "within",
+          subScope: "passage",
+          session: targetSession,
+          metricDef: metricDef,
+          points: points,
+          totalItems: points.length,
+          emptyMessage: points.length === 0 ? "No passage telemetry in this session." : null
+        };
+      }
+    }
+  }
+
+  /* ===== CANVAS RENDERING ENGINE ===== */
+  function drawCanvasChart(canvas, dataset, hoveredIdx) {
+    if (!canvas) return;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+
+    const dpr = window.devicePixelRatio || 1;
+    const rect = canvas.getBoundingClientRect();
+    const width = rect.width || 760;
+    const height = rect.height || 340;
+
+    canvas.width = Math.round(width * dpr);
+    canvas.height = Math.round(height * dpr);
+    ctx.scale(dpr, dpr);
+
+    ctx.clearRect(0, 0, width, height);
+
+    const padL = 68;
+    const padR = 36;
+    const padT = 32;
+    const padB = 62;
+
+    const plotW = width - padL - padR;
+    const plotH = height - padT - padB;
+
+    if (!dataset.points || dataset.points.length === 0) {
+      ctx.fillStyle = "#64748B";
+      ctx.font = "600 13.5px Arial, sans-serif";
+      ctx.textAlign = "center";
+      ctx.fillText(dataset.emptyMessage || "No data available to display.", width / 2, height / 2);
+      return;
+    }
+
+    const pts = dataset.points;
+    const vals = pts.map(p => p.val);
+    let minVal = Math.min(...vals);
+    let maxVal = Math.max(...vals);
+
+    // Expand bounds with benchmark consideration
+    const bench = dataset.metricDef.benchmark;
+    if (bench) {
+      if (bench.min !== undefined) minVal = Math.min(minVal, bench.min);
+      if (bench.max !== undefined) maxVal = Math.max(maxVal, bench.max);
+      if (bench.line !== undefined) {
+        minVal = Math.min(minVal, bench.line - 2);
+        maxVal = Math.max(maxVal, bench.line + 2);
+      }
+    }
+
+    if (minVal === maxVal) {
+      minVal = Math.max(0, minVal - 10);
+      maxVal = maxVal + 10;
+    }
+
+    // Add breathing room to Y axis (10% padding top/bottom)
+    const valSpan = maxVal - minVal || 1;
+    const yFloor = Math.max(0, Math.floor(minVal - valSpan * 0.1));
+    const yCeil = Math.ceil(maxVal + valSpan * 0.1);
+
+    const getYPx = (v) => padT + plotH - ((v - yFloor) / (yCeil - yFloor)) * plotH;
+    const getXPx = (idx) => {
+      if (pts.length === 1) return padL + plotW / 2;
+      return padL + (idx / (pts.length - 1)) * plotW;
+    };
+
+    // 1. Draw Benchmark Shaded Band or Target Line
+    if (bench && bench.min !== undefined && bench.max !== undefined) {
+      const topY = getYPx(bench.max);
+      const botY = getYPx(bench.min);
+      const bandH = Math.abs(botY - topY);
+
+      ctx.fillStyle = "rgba(30, 122, 60, 0.08)";
+      ctx.fillRect(padL, topY, plotW, bandH);
+
+      ctx.strokeStyle = "rgba(30, 122, 60, 0.35)";
+      ctx.lineWidth = 1;
+      ctx.setLineDash([4, 4]);
+      ctx.beginPath();
+      ctx.moveTo(padL, topY);
+      ctx.lineTo(padL + plotW, topY);
+      ctx.moveTo(padL, botY);
+      ctx.lineTo(padL + plotW, botY);
+      ctx.stroke();
+      ctx.setLineDash([]);
+
+      ctx.fillStyle = "#1E7A3C";
+      ctx.font = "bold 10.5px Arial, sans-serif";
+      ctx.textAlign = "right";
+      ctx.fillText(bench.label, padL + plotW - 6, topY + 12);
+    } else if (bench && bench.line !== undefined) {
+      const lineY = getYPx(bench.line);
+      ctx.strokeStyle = "rgba(30, 122, 60, 0.6)";
+      ctx.lineWidth = 1.5;
+      ctx.setLineDash([4, 4]);
+      ctx.beginPath();
+      ctx.moveTo(padL, lineY);
+      ctx.lineTo(padL + plotW, lineY);
+      ctx.stroke();
+      ctx.setLineDash([]);
+
+      ctx.fillStyle = "#1E7A3C";
+      ctx.font = "bold 10.5px Arial, sans-serif";
+      ctx.textAlign = "right";
+      ctx.fillText(bench.label, padL + plotW - 6, lineY - 4);
+    }
+
+    // 2. Grid lines & Y Ticks
+    const numYTicks = 5;
+    ctx.font = "11px Arial, sans-serif";
+    ctx.fillStyle = "#64748B";
+    ctx.textAlign = "right";
+
+    for (let i = 0; i <= numYTicks; i++) {
+      const tickVal = yFloor + (i / numYTicks) * (yCeil - yFloor);
+      const yPos = getYPx(tickVal);
+
+      // Grid line
+      ctx.strokeStyle = "#E2E8F0";
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(padL, yPos);
+      ctx.lineTo(padL + plotW, yPos);
+      ctx.stroke();
+
+      // Tick text
+      const tickStr = dataset.metricDef.formatTick ? dataset.metricDef.formatTick(tickVal) : String(Math.round(tickVal));
+      ctx.fillText(tickStr, padL - 8, yPos + 3.5);
+    }
+
+    // 3. Area gradient fill under data curve
+    if (pts.length > 1) {
+      const grad = ctx.createLinearGradient(0, padT, 0, padT + plotH);
+      grad.addColorStop(0, "rgba(24, 90, 157, 0.22)");
+      grad.addColorStop(1, "rgba(24, 90, 157, 0.01)");
+
+      ctx.fillStyle = grad;
+      ctx.beginPath();
+      ctx.moveTo(getXPx(0), padT + plotH);
+      pts.forEach((p, idx) => {
+        ctx.lineTo(getXPx(idx), getYPx(p.val));
+      });
+      ctx.lineTo(getXPx(pts.length - 1), padT + plotH);
+      ctx.closePath();
+      ctx.fill();
+    }
+
+    // 4. Data line stroke
+    ctx.strokeStyle = "#185A9D";
+    ctx.lineWidth = 2.5;
+    ctx.lineJoin = "round";
+    ctx.lineCap = "round";
+    ctx.beginPath();
+    pts.forEach((p, idx) => {
+      const x = getXPx(idx);
+      const y = getYPx(p.val);
+      if (idx === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+    });
+    ctx.stroke();
+
+    // 5. Data points circles & X Ticks
+    ctx.textAlign = "center";
+    ctx.font = "11px Arial, sans-serif";
+
+    pts.forEach((p, idx) => {
+      const x = getXPx(idx);
+      const y = getYPx(p.val);
+      const isHovered = hoveredIdx === idx;
+
+      // Outer point glow on hover
+      if (isHovered) {
+        ctx.fillStyle = "rgba(24, 90, 157, 0.25)";
+        ctx.beginPath();
+        ctx.arc(x, y, 10, 0, Math.PI * 2);
+        ctx.fill();
+      }
+
+      // Point circle
+      ctx.fillStyle = isHovered ? "#0C3259" : "#185A9D";
+      ctx.beginPath();
+      ctx.arc(x, y, isHovered ? 6 : 4.5, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.fillStyle = "#FFFFFF";
+      ctx.beginPath();
+      ctx.arc(x, y, isHovered ? 2.5 : 2, 0, Math.PI * 2);
+      ctx.fill();
+
+      // X Tick Label
+      ctx.save();
+      ctx.translate(x, padT + plotH + 16);
+      ctx.rotate(-Math.PI / 6);
+      ctx.fillStyle = isHovered ? "#0F172A" : "#64748B";
+      ctx.font = isHovered ? "bold 11px Arial, sans-serif" : "11px Arial, sans-serif";
+      ctx.textAlign = "right";
+      ctx.fillText(p.shortLabel, 0, 0);
+      ctx.restore();
+    });
+
+    // 6. Draw interactive Tooltip card
+    if (hoveredIdx >= 0 && hoveredIdx < pts.length) {
+      const p = pts[hoveredIdx];
+      const x = getXPx(hoveredIdx);
+      const y = getYPx(p.val);
+
+      const ttLines = [
+        p.label,
+        `${dataset.metricDef.shortLabel}: ${p.displayVal}`
+      ];
+      if (hoveredIdx > 0) {
+        const prevVal = pts[hoveredIdx - 1].val;
+        const delta = p.val - prevVal;
+        const deltaStr = (delta >= 0 ? "+" : "") + Math.round(delta);
+        ttLines.push(`Delta vs previous: ${deltaStr} ${dataset.metricDef.unit}`);
+      }
+
+      ctx.font = "bold 12px Arial, sans-serif";
+      let ttW = Math.max(...ttLines.map(l => ctx.measureText(l).width)) + 24;
+      const ttH = ttLines.length * 18 + 14;
+
+      let ttX = x - ttW / 2;
+      let ttY = y - ttH - 12;
+
+      // Clamping inside chart canvas
+      if (ttX < padL) ttX = padL + 4;
+      if (ttX + ttW > width - padR) ttX = width - padR - ttW - 4;
+      if (ttY < 6) ttY = y + 14;
+
+      // Tooltip Card Box
+      ctx.fillStyle = "#1E293B";
+      ctx.strokeStyle = "#334155";
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.roundRect(ttX, ttY, ttW, ttH, 5);
+      ctx.fill();
+      ctx.stroke();
+
+      // Tooltip Text
+      ttLines.forEach((line, li) => {
+        ctx.fillStyle = li === 0 ? "#94A3B8" : (li === 1 ? "#FFFFFF" : "#38BDF8");
+        ctx.font = li === 1 ? "bold 12px Arial, sans-serif" : "11px Arial, sans-serif";
+        ctx.textAlign = "left";
+        ctx.fillText(line, ttX + 12, ttY + 16 + (li * 18));
+      });
+    }
+  }
+
+  /* ===== EXPORT CHART AS PNG ===== */
+  function exportChartToPNG(dataset) {
+    if (!dataset || !dataset.points || !dataset.points.length) {
+      alert("No data available to export as chart.");
+      return;
+    }
+
+    const expW = 1280;
+    const expH = 720;
+    const expCanvas = document.createElement("canvas");
+    expCanvas.width = expW;
+    expCanvas.height = expH;
+    const ctx = expCanvas.getContext("2d");
+
+    // Clean white background
+    ctx.fillStyle = "#FFFFFF";
+    ctx.fillRect(0, 0, expW, expH);
+
+    // Top Brand & Header Banner
+    ctx.fillStyle = "#1B3A5C";
+    ctx.fillRect(0, 0, expW, 70);
+
+    ctx.fillStyle = "#FFFFFF";
+    ctx.font = "bold 20px Arial, sans-serif";
+    ctx.textAlign = "left";
+    ctx.fillText("DrillRoom MCAT Analytics", 32, 42);
+
+    ctx.font = "13px Arial, sans-serif";
+    ctx.fillStyle = "#94A3B8";
+    ctx.textAlign = "right";
+    ctx.fillText(`Generated: ${new Date().toLocaleDateString()} at ${new Date().toLocaleTimeString()}`, expW - 32, 42);
+
+    // Subtitle & Scope
+    ctx.fillStyle = "#0F172A";
+    ctx.font = "bold 18px Arial, sans-serif";
+    ctx.textAlign = "left";
+    const subTitle = dataset.scope === "across"
+      ? `Performance Trajectory: ${dataset.metricDef.label} (Across All Sessions)`
+      : `Single-Session Analysis: ${dataset.session?.suiteTitle || dataset.session?.label || 'Session'} (${dataset.metricDef.label})`;
+    ctx.fillText(subTitle, 32, 105);
+
+    // Render Stats Ribbon
+    const vals = dataset.points.map(p => p.val);
+    const avgVal = vals.length ? (vals.reduce((a, b) => a + b, 0) / vals.length) : 0;
+    const minVal = vals.length ? Math.min(...vals) : 0;
+    const maxVal = vals.length ? Math.max(...vals) : 0;
+    const trendDelta = vals.length > 1 ? (vals[vals.length - 1] - vals[0]) : 0;
+
+    const statsBarY = 120;
+    ctx.fillStyle = "#F8FAFC";
+    ctx.strokeStyle = "#CBD5E1";
+    ctx.lineWidth = 1;
+    ctx.fillRect(32, statsBarY, expW - 64, 46);
+    ctx.strokeRect(32, statsBarY, expW - 64, 46);
+
+    ctx.fillStyle = "#334155";
+    ctx.font = "13px Arial, sans-serif";
+    ctx.textAlign = "left";
+    const statText = `Average: ${dataset.metricDef.formatVal(avgVal)}   |   Min: ${dataset.metricDef.formatVal(minVal)}   |   Max: ${dataset.metricDef.formatVal(maxVal)}   |   Trajectory: ${trendDelta >= 0 ? "+" : ""}${Math.round(trendDelta)} ${dataset.metricDef.unit}`;
+    ctx.fillText(statText, 48, statsBarY + 28);
+
+    // Draw Main Chart in Center
+    const chartSubCanvas = document.createElement("canvas");
+    chartSubCanvas.style.width = `${expW - 64}px`;
+    chartSubCanvas.style.height = `${expH - 250}px`;
+    drawCanvasChart(chartSubCanvas, dataset, -1);
+    ctx.drawImage(chartSubCanvas, 32, 180, expW - 64, expH - 260);
+
+    // Footer Watermark
+    ctx.fillStyle = "#64748B";
+    ctx.font = "12px Arial, sans-serif";
+    ctx.textAlign = "center";
+    ctx.fillText("DrillRoom MCAT Preparation & Pacing Analytics • Authentic AAMC Metric Calibration", expW / 2, expH - 24);
+
+    // Trigger Download
+    const dataUrl = expCanvas.toDataURL("image/png");
+    const link = document.createElement("a");
+    link.download = `DrillRoom_Chart_${dataset.metricDef.id}_${Date.now()}.png`;
+    link.href = dataUrl;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  }
+
+  /* ===== EXPORT DATASET AS CSV ===== */
+  function exportChartToCSV(dataset) {
+    if (!dataset || !dataset.points || !dataset.points.length) {
+      alert("No data available to export as CSV.");
+      return;
+    }
+
+    const headers = ["Index", "Label", "Value", "Unit", "Subject", "Date"];
+    const rows = dataset.points.map(p => [
+      p.xIndex + 1,
+      `"${p.label.replace(/"/g, '""')}"`,
+      p.val,
+      `"${dataset.metricDef.unit}"`,
+      `"${p.sec || ''}"`,
+      `"${p.date || ''}"`
+    ]);
+
+    const csvContent = "data:text/csv;charset=utf-8," + [headers.join(","), ...rows.map(r => r.join(","))].join("\n");
+    const encodedUri = encodeURI(csvContent);
+    const link = document.createElement("a");
+    link.setAttribute("href", encodedUri);
+    link.setAttribute("download", `DrillRoom_${dataset.metricDef.id}_${Date.now()}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  }
+
+  /* ===== GEMINI AI TREND ANALYSIS ===== */
+  async function runAITrendAnalysis(dataset, container, customQuestion) {
+    if (!dataset || !dataset.points.length) return;
+
+    const apiKey = (typeof window.getGeminiApiKey === "function") ? window.getGeminiApiKey() : null;
+    if (!apiKey) {
+      if (typeof window.showGeminiSettingsModal === "function") {
+        window.showGeminiSettingsModal();
+      } else {
+        alert("Please connect your Google Gemini API key to unlock AI trajectory coaching.");
+      }
+      return;
+    }
+
+    const statusEl = document.getElementById("gChartAIStatus");
+    const contentEl = document.getElementById("gChartAIContent");
+    const askBtn = document.getElementById("btnAskGeminiChart");
+    if (statusEl) statusEl.textContent = "Synthesizing trajectory analytics with Gemini...";
+    if (askBtn) askBtn.disabled = true;
+
+    const vals = dataset.points.map(p => p.val);
+    const avgVal = (vals.reduce((a, b) => a + b, 0) / vals.length).toFixed(1);
+    const minVal = Math.min(...vals);
+    const maxVal = Math.max(...vals);
+    const trendDelta = (vals[vals.length - 1] - vals[0]).toFixed(1);
+
+    const promptText = `You are a world-class MCAT cognitive coach and former AAMC psychometrician.
+The student is inspecting their performance analytics chart inside the DrillRoom MCAT app:
+- **Scope:** ${dataset.scope === "across" ? "Across Chronological Practice Sessions" : "Within Single Session (Passage-by-Passage)"}
+- **Metric Analyzed:** ${dataset.metricDef.label} (${dataset.metricDef.unit})
+- **AAMC Target Benchmark:** ${dataset.metricDef.benchmark ? (dataset.metricDef.benchmark.label || dataset.metricDef.benchmark.min + '-' + dataset.metricDef.benchmark.max) : "Standard MCAT pace"}
+- **Dataset Chronology (${dataset.points.length} points):**
+${dataset.points.map(p => `- ${p.label}: **${p.displayVal}** (${p.sec || 'Section'})`).join("\n")}
+
+- **Summary Statistics:**
+  * Average: **${dataset.metricDef.formatVal(avgVal)}**
+  * Peak / Best: **${dataset.metricDef.formatVal(maxVal)}**
+  * Minimum: **${dataset.metricDef.formatVal(minVal)}**
+  * Net Trend Progression: **${trendDelta >= 0 ? "+" + trendDelta : trendDelta} ${dataset.metricDef.unit}**
+
+${customQuestion ? `The student is asking this specific follow-up question about this trend:\n"${customQuestion}"\n` : ""}
+
+### INSTRUCTIONS:
+Generate a concise, high-impact MCAT Trend Assessment (under 250 words total) structured with these exact sections:
+1. **Trajectory & Pacing Reality:** Direct assessment of whether they are improving, stabilizing, or experiencing cognitive fatigue/plateauing. Cite the specific numbers and contrast against AAMC benchmarks.
+2. **Cognitive Fatigue & Speed Diagnosis:** Diagnose what their passage reading pace or question solving speed reveals about their comprehension trade-off. Are they rushing early or fatiguing late?
+3. **#1 Tactical Drill to Deploy on Next Section:** Give 1 ultra-specific, concrete execution rule or heuristic to optimize this metric immediately.`;
+
+    try {
+      const model = (typeof window.getGeminiModel === "function") ? window.getGeminiModel() : "gemini-2.5-flash";
+      const res = await window.callGeminiAPI(promptText, apiKey, model);
+
+      chartState.aiAnalysisText = res.text;
+      if (statusEl) statusEl.textContent = `Diagnostic formulated by ${res.modelUsed}`;
+      if (contentEl) {
+        const renderMd = (typeof window.renderGeminiMarkdown === "function") ? window.renderGeminiMarkdown : (s => `<p>${s}</p>`);
+        contentEl.innerHTML = renderMd(res.text);
+      }
+    } catch (err) {
+      if (statusEl) statusEl.textContent = `Error: ${err.message}`;
+    } finally {
+      if (askBtn) askBtn.disabled = false;
+    }
+  }
+
+  /* ===== MAIN RENDERER FOR PERFORMANCE CHARTS ===== */
+  function renderPerformanceCharts(container) {
+    if (!container) return;
+    container.innerHTML = "";
+
+    const allSessions = getAllEnrichedSessions();
+    const dataset = getActiveChartDataset();
+
+    const wrap = document.createElement("div");
+    wrap.className = "pe-chart-dashboard";
+    wrap.style.cssText = "margin:20px 0 24px 0;background:#FFFFFF;border:1px solid var(--line);border-radius:6px;box-shadow:0 2px 8px rgba(0,0,0,0.06);padding:20px";
+
+    // 1. Dashboard Header with Scope Toggle & Action Buttons
+    const headerEl = document.createElement("div");
+    headerEl.style.cssText = "display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;margin-bottom:16px;border-bottom:1.5px solid #E2E8F0;padding-bottom:14px";
+    headerEl.innerHTML = `
+      <div>
+        <div style="font-size:17px;font-weight:700;color:var(--nav);display:flex;align-items:center;gap:8px">
+          Performance Analytics &amp; Pacing Trajectory
+        </div>
+        <div style="font-size:12.5px;color:var(--faint);margin-top:2px">
+          Track your passage reading speed, question answering pace, and scaled scores chronologically across sessions or within individual passages.
+        </div>
+      </div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+        <!-- Scope Switcher -->
+        <div style="display:flex;background:#EDEFF2;padding:2px;border-radius:4px">
+          <button class="btn" id="btnScopeAcross" style="font-size:12px;padding:5px 12px;border-radius:3px;${chartState.scope === 'across' ? 'background:#185A9D;color:#fff;font-weight:700' : 'color:var(--soft)'}">
+            Across All Sessions
+          </button>
+          <button class="btn" id="btnScopeWithin" style="font-size:12px;padding:5px 12px;border-radius:3px;${chartState.scope === 'within' ? 'background:#185A9D;color:#fff;font-weight:700' : 'color:var(--soft)'}">
+            Single-Session Deep Dive
+          </button>
+        </div>
+        <!-- Export & AI Actions -->
+        <button class="btn" id="btnDownloadChartPNG" style="font-size:12px;padding:5px 12px;border:1px solid #CBD5E1;background:#F8FAFC" title="Download chart image">
+          Download Chart (PNG)
+        </button>
+        <button class="btn" id="btnExportChartCSV" style="font-size:12px;padding:5px 12px;border:1px solid #CBD5E1;background:#F8FAFC" title="Export raw data to CSV">
+          Export CSV
+        </button>
+        <button class="btn pri" id="btnToggleAIPanel" style="font-size:12px;padding:5px 12px">
+          Ask Gemini About Trend
+        </button>
+      </div>
+    `;
+    wrap.appendChild(headerEl);
+
+    // 2. Control Bar (Axis Customization & Filters)
+    const ctrlBar = document.createElement("div");
+    ctrlBar.style.cssText = "display:flex;gap:14px;flex-wrap:wrap;align-items:center;background:#F8FAFC;padding:12px 14px;border:1px solid #E2E8F0;border-radius:4px;margin-bottom:16px;font-size:12.5px";
+
+    if (chartState.scope === "across") {
+      ctrlBar.innerHTML = `
+        <label style="display:flex;align-items:center;gap:6px;font-weight:600;color:var(--soft)">
+          Y-Axis Metric:
+          <select id="selAcrossYMetric" style="padding:5px 8px;border:1px solid var(--line);border-radius:3px;background:#fff;font-size:12.5px">
+            <option value="avgPassageReadSec" ${chartState.acrossY === 'avgPassageReadSec' ? 'selected' : ''}>Avg Passage Reading Time (3:00 - 4:00 Benchmark)</option>
+            <option value="avgPassageWpm" ${chartState.acrossY === 'avgPassageWpm' ? 'selected' : ''}>Avg Passage Reading Pace (200 - 260 WPM Target)</option>
+            <option value="scaledScore" ${chartState.acrossY === 'scaledScore' ? 'selected' : ''}>MCAT Scaled Score (118 - 132)</option>
+            <option value="pct" ${chartState.acrossY === 'pct' ? 'selected' : ''}>Raw Accuracy (%)</option>
+            <option value="avgQSec" ${chartState.acrossY === 'avgQSec' ? 'selected' : ''}>Avg Pure Question Solving Time (s/Q)</option>
+            <option value="solidRatio" ${chartState.acrossY === 'solidRatio' ? 'selected' : ''}>Solid Mastery Ratio (%)</option>
+            <option value="guessCount" ${chartState.acrossY === 'guessCount' ? 'selected' : ''}>Total Guesses &amp; Coin Flips</option>
+            <option value="netSecondGuessing" ${chartState.acrossY === 'netSecondGuessing' ? 'selected' : ''}>Second-Guessing Net Impact (Points)</option>
+            <option value="timeUsedMinutes" ${chartState.acrossY === 'timeUsedMinutes' ? 'selected' : ''}>Total Section Elapsed Time (Minutes)</option>
+          </select>
+        </label>
+
+        <label style="display:flex;align-items:center;gap:6px;font-weight:600;color:var(--soft)">
+          X-Axis Order:
+          <select id="selAcrossXAxis" style="padding:5px 8px;border:1px solid var(--line);border-radius:3px;background:#fff;font-size:12.5px">
+            <option value="session" ${chartState.acrossX === 'session' ? 'selected' : ''}>Chronological Sessions (Session 1, 2, ...)</option>
+            <option value="date" ${chartState.acrossX === 'date' ? 'selected' : ''}>Timeline Date &amp; Subject</option>
+          </select>
+        </label>
+
+        <label style="display:flex;align-items:center;gap:6px;font-weight:600;color:var(--soft)">
+          Subject Filter:
+          <select id="selChartSubject" style="padding:5px 8px;border:1px solid var(--line);border-radius:3px;background:#fff;font-size:12.5px">
+            <option value="all" ${chartState.subjectFilter === 'all' ? 'selected' : ''}>All 4 Subjects</option>
+            <option value="C/P" ${chartState.subjectFilter === 'C/P' ? 'selected' : ''}>C/P Only</option>
+            <option value="CARS" ${chartState.subjectFilter === 'CARS' ? 'selected' : ''}>CARS Only</option>
+            <option value="B/B" ${chartState.subjectFilter === 'B/B' ? 'selected' : ''}>B/B Only</option>
+            <option value="P/S" ${chartState.subjectFilter === 'P/S' ? 'selected' : ''}>P/S Only</option>
+          </select>
+        </label>
+
+        <label style="display:flex;align-items:center;gap:6px;font-weight:600;color:var(--soft)">
+          Length:
+          <select id="selChartDuration" style="padding:5px 8px;border:1px solid var(--line);border-radius:3px;background:#fff;font-size:12.5px">
+            <option value="all" ${chartState.durationFilter === 'all' ? 'selected' : ''}>All Durations</option>
+            <option value="90" ${chartState.durationFilter === '90' ? 'selected' : ''}>90m Full Sections Only</option>
+            <option value="45" ${chartState.durationFilter === '45' ? 'selected' : ''}>~45m Halves Only</option>
+            <option value="60" ${chartState.durationFilter === '60' ? 'selected' : ''}>60m Paced Sections Only</option>
+          </select>
+        </label>
+      `;
+    } else {
+      // SINGLE-SESSION CONTROLS
+      ctrlBar.innerHTML = `
+        <label style="display:flex;align-items:center;gap:6px;font-weight:600;color:var(--soft)">
+          Select Completed Session:
+          <select id="selWithinSession" style="padding:5px 8px;border:1px solid var(--line);border-radius:3px;background:#fff;font-size:12.5px;max-width:260px">
+            ${allSessions.slice().reverse().map(s => `
+              <option value="${s.id}" ${s.id === chartState.selectedSessionId ? 'selected' : ''}>
+                ${new Date(s.ts || Date.now()).toLocaleDateString([], {month:'short', day:'numeric'})} &bull; ${s.sec} - ${s.suiteTitle || s.label} (${s.scaledScore || 125}/132)
+              </option>
+            `).join("")}
+          </select>
+        </label>
+
+        <label style="display:flex;align-items:center;gap:6px;font-weight:600;color:var(--soft)">
+          Breakdown Level (X-Axis):
+          <select id="selWithinXAxis" style="padding:5px 8px;border:1px solid var(--line);border-radius:3px;background:#fff;font-size:12.5px">
+            <option value="passage" ${chartState.withinX === 'passage' ? 'selected' : ''}>Chronologically Each Passage (Passage 1, 2, ...)</option>
+            <option value="question" ${chartState.withinX === 'question' ? 'selected' : ''}>Chronologically Each Question (Q1, Q2, ...)</option>
+          </select>
+        </label>
+
+        <label style="display:flex;align-items:center;gap:6px;font-weight:600;color:var(--soft)">
+          Metric (Y-Axis):
+          <select id="selWithinYMetric" style="padding:5px 8px;border:1px solid var(--line);border-radius:3px;background:#fff;font-size:12.5px">
+            ${chartState.withinX === 'question' ? `
+              <option value="qTime" ${chartState.withinY === 'qTime' ? 'selected' : ''}>Question Solving Time (Seconds/Q)</option>
+              <option value="qOutcomeScore" ${chartState.withinY === 'qOutcomeScore' ? 'selected' : ''}>Confidence &amp; Mastery Tier (Solid, 50/50, Guess, Miss)</option>
+            ` : `
+              <option value="passageReadSec" ${chartState.withinY === 'passageReadSec' ? 'selected' : ''}>Passage Reading Time (3:00 - 4:00 Benchmark)</option>
+              <option value="passageWpm" ${chartState.withinY === 'passageWpm' ? 'selected' : ''}>Passage Reading Pace (200 - 260 WPM Target)</option>
+              <option value="passageWordCount" ${chartState.withinY === 'passageWordCount' ? 'selected' : ''}>Passage Word Count</option>
+              <option value="passageAccuracy" ${chartState.withinY === 'passageAccuracy' ? 'selected' : ''}>Passage Question Accuracy (%)</option>
+              <option value="passageAvgQTime" ${chartState.withinY === 'passageAvgQTime' ? 'selected' : ''}>Avg Question Solving Time on Passage (s/Q)</option>
+              <option value="passageTotalTime" ${chartState.withinY === 'passageTotalTime' ? 'selected' : ''}>Total Passage Duration (Reading + Questions)</option>
+              <option value="passageGuesses" ${chartState.withinY === 'passageGuesses' ? 'selected' : ''}>Guesses &amp; 50/50s on Passage</option>
+              <option value="passageFatigueDelta" ${chartState.withinY === 'passageFatigueDelta' ? 'selected' : ''}>Fatigue Delta vs Passage 1 (Slowing Index)</option>
+            `}
+          </select>
+        </label>
+      `;
+    }
+    wrap.appendChild(ctrlBar);
+
+    // 3. Stats Ribbon (Summary Analytics)
+    const statsRibbon = document.createElement("div");
+    statsRibbon.style.cssText = "display:flex;gap:18px;flex-wrap:wrap;margin-bottom:14px;padding:8px 12px;background:#F1F5F9;border-radius:4px;font-size:12px;color:#334155";
+
+    const vals = dataset.points.map(p => p.val);
+    const avgVal = vals.length ? (vals.reduce((a, b) => a + b, 0) / vals.length) : 0;
+    const minVal = vals.length ? Math.min(...vals) : 0;
+    const maxVal = vals.length ? Math.max(...vals) : 0;
+    const trendDelta = vals.length > 1 ? (vals[vals.length - 1] - vals[0]) : 0;
+
+    statsRibbon.innerHTML = `
+      <div><strong>Data Points:</strong> ${dataset.points.length}</div>
+      <div><strong>Average:</strong> ${dataset.metricDef.formatVal(avgVal)}</div>
+      <div><strong>Min:</strong> ${dataset.metricDef.formatVal(minVal)}</div>
+      <div><strong>Max:</strong> ${dataset.metricDef.formatVal(maxVal)}</div>
+      <div><strong>Trajectory Delta:</strong> <span style="font-weight:700;color:${trendDelta > 0 ? (dataset.metricDef.higherIsBetter ? 'var(--ok)' : 'var(--warn)') : (dataset.metricDef.higherIsBetter ? 'var(--bad)' : 'var(--ok)')}">${trendDelta >= 0 ? "+" : ""}${Math.round(trendDelta)} ${dataset.metricDef.unit}</span></div>
+      ${dataset.metricDef.benchmark ? `<div style="margin-left:auto;color:#1E7A3C;font-weight:600">Target: ${dataset.metricDef.benchmark.label}</div>` : ""}
+    `;
+    wrap.appendChild(statsRibbon);
+
+    // 4. Interactive Canvas
+    const canvasWrap = document.createElement("div");
+    canvasWrap.style.cssText = "position:relative;width:100%;height:320px";
+    const canvas = document.createElement("canvas");
+    canvas.style.cssText = "width:100%;height:100%;display:block;cursor:crosshair";
+    canvasWrap.appendChild(canvas);
+    wrap.appendChild(canvasWrap);
+
+    // Initial render
+    setTimeout(() => {
+      drawCanvasChart(canvas, dataset, chartState.hoverIndex);
+    }, 0);
+
+    // Mouse move hover listener for interactive tooltips
+    canvas.onmousemove = (e) => {
+      const rect = canvas.getBoundingClientRect();
+      const xMouse = e.clientX - rect.left;
+      const padL = 68;
+      const padR = 36;
+      const plotW = rect.width - padL - padR;
+
+      let closestIdx = -1;
+      let closestDist = Infinity;
+
+      dataset.points.forEach((p, idx) => {
+        const xPos = dataset.points.length === 1 ? (padL + plotW / 2) : (padL + (idx / (dataset.points.length - 1)) * plotW);
+        const dist = Math.abs(xMouse - xPos);
+        if (dist < closestDist && dist < 35) {
+          closestDist = dist;
+          closestIdx = idx;
+        }
+      });
+
+      if (closestIdx !== chartState.hoverIndex) {
+        chartState.hoverIndex = closestIdx;
+        drawCanvasChart(canvas, dataset, closestIdx);
+      }
+    };
+
+    canvas.onmouseleave = () => {
+      chartState.hoverIndex = -1;
+      drawCanvasChart(canvas, dataset, -1);
+    };
+
+    // 5. AI Trajectory Analysis Panel
+    const aiPanel = document.createElement("div");
+    aiPanel.id = "peChartAIPanel";
+    aiPanel.style.cssText = `margin-top:20px;border-top:1.5px solid #E2E8F0;padding-top:16px;${chartState.aiPanelOpen ? "" : "display:none"}`;
+    aiPanel.innerHTML = `
+      <div style="background:#F8FAFC;border:1.5px solid #185A9D;border-radius:6px;padding:16px 18px">
+        <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:10px">
+          <div style="font-size:14.5px;font-weight:700;color:var(--nav);display:flex;align-items:center;gap:8px">
+            Gemini AI Trajectory &amp; Fatigue Analysis
+          </div>
+          <div id="gChartAIStatus" style="font-size:11.5px;color:var(--faint);font-weight:600"></div>
+        </div>
+
+        <div id="gChartAIContent" style="font-size:13px;line-height:1.6;color:var(--soft);margin-bottom:14px">
+          ${chartState.aiAnalysisText ? (typeof window.renderGeminiMarkdown === "function" ? window.renderGeminiMarkdown(chartState.aiAnalysisText) : chartState.aiAnalysisText) : '<p style="color:var(--faint)">Click "Analyze Trajectory" below to have Gemini formulate an expert diagnostic of your pacing and cognitive stamina across these sessions.</p>'}
+        </div>
+
+        <!-- Follow-up Question to Chart AI -->
+        <div style="display:flex;gap:8px;align-items:center">
+          <input type="text" id="gChartQuestionInput" placeholder="Ask Gemini a specific question about this chart, speed plateau, or pacing..." 
+                 style="flex:1;padding:8px 12px;border:1px solid var(--line2);border-radius:3px;font-size:12.5px" />
+          <button class="btn pri" id="btnAskGeminiChart" style="padding:8px 16px;font-size:12.5px;white-space:nowrap">Analyze Trajectory</button>
+        </div>
+      </div>
+    `;
+    wrap.appendChild(aiPanel);
+
+    // Event Listeners for Scope & Filters
+    const btnScopeAcross = wrap.querySelector("#btnScopeAcross");
+    const btnScopeWithin = wrap.querySelector("#btnScopeWithin");
+    if (btnScopeAcross) {
+      btnScopeAcross.onclick = () => {
+        chartState.scope = "across";
+        renderPerformanceCharts(container);
+      };
+    }
+    if (btnScopeWithin) {
+      btnScopeWithin.onclick = () => {
+        chartState.scope = "within";
+        renderPerformanceCharts(container);
+      };
+    }
+
+    const selAcrossY = wrap.querySelector("#selAcrossYMetric");
+    if (selAcrossY) {
+      selAcrossY.onchange = (e) => {
+        chartState.acrossY = e.target.value;
+        renderPerformanceCharts(container);
+      };
+    }
+
+    const selAcrossX = wrap.querySelector("#selAcrossXAxis");
+    if (selAcrossX) {
+      selAcrossX.onchange = (e) => {
+        chartState.acrossX = e.target.value;
+        renderPerformanceCharts(container);
+      };
+    }
+
+    const selSub = wrap.querySelector("#selChartSubject");
+    if (selSub) {
+      selSub.onchange = (e) => {
+        chartState.subjectFilter = e.target.value;
+        renderPerformanceCharts(container);
+      };
+    }
+
+    const selDur = wrap.querySelector("#selChartDuration");
+    if (selDur) {
+      selDur.onchange = (e) => {
+        chartState.durationFilter = e.target.value;
+        renderPerformanceCharts(container);
+      };
+    }
+
+    const selWithinSession = wrap.querySelector("#selWithinSession");
+    if (selWithinSession) {
+      selWithinSession.onchange = (e) => {
+        chartState.selectedSessionId = e.target.value;
+        renderPerformanceCharts(container);
+      };
+    }
+
+    const selWithinX = wrap.querySelector("#selWithinXAxis");
+    if (selWithinX) {
+      selWithinX.onchange = (e) => {
+        chartState.withinX = e.target.value;
+        renderPerformanceCharts(container);
+      };
+    }
+
+    const selWithinY = wrap.querySelector("#selWithinYMetric");
+    if (selWithinY) {
+      selWithinY.onchange = (e) => {
+        chartState.withinY = e.target.value;
+        renderPerformanceCharts(container);
+      };
+    }
+
+    // Export Buttons
+    const btnPNG = wrap.querySelector("#btnDownloadChartPNG");
+    if (btnPNG) {
+      btnPNG.onclick = () => exportChartToPNG(dataset);
+    }
+
+    const btnCSV = wrap.querySelector("#btnExportChartCSV");
+    if (btnCSV) {
+      btnCSV.onclick = () => exportChartToCSV(dataset);
+    }
+
+    // AI Panel Toggle & Ask Gemini
+    const btnToggleAI = wrap.querySelector("#btnToggleAIPanel");
+    if (btnToggleAI) {
+      btnToggleAI.onclick = () => {
+        chartState.aiPanelOpen = !chartState.aiPanelOpen;
+        aiPanel.style.display = chartState.aiPanelOpen ? "block" : "none";
+        if (chartState.aiPanelOpen && !chartState.aiAnalysisText) {
+          runAITrendAnalysis(dataset, aiPanel, null);
+        }
+      };
+    }
+
+    const btnAskAI = wrap.querySelector("#btnAskGeminiChart");
+    const inputAI = wrap.querySelector("#gChartQuestionInput");
+    if (btnAskAI) {
+      btnAskAI.onclick = () => {
+        const q = inputAI ? inputAI.value.trim() : "";
+        runAITrendAnalysis(dataset, aiPanel, q || null);
+        if (inputAI) inputAI.value = "";
+      };
+    }
+
+    container.appendChild(wrap);
+  }
+
+  /* ===== EXPORTS ===== */
+  window.renderPerformanceCharts = renderPerformanceCharts;
+  window.enrichSessionWithStats = enrichSessionWithStats;
+  window.getAllEnrichedSessions = getAllEnrichedSessions;
+  window.getActiveChartDataset = getActiveChartDataset;
+  window.drawCanvasChart = drawCanvasChart;
+  window.exportChartToPNG = exportChartToPNG;
+  window.exportChartToCSV = exportChartToCSV;
+  window.chartState = chartState;
+  window.CHART_METRIC_DEFS = METRIC_DEFS;
+
+  if (typeof globalThis !== "undefined") {
+    globalThis.renderPerformanceCharts = renderPerformanceCharts;
+    globalThis.enrichSessionWithStats = enrichSessionWithStats;
+    globalThis.getAllEnrichedSessions = getAllEnrichedSessions;
+    globalThis.getActiveChartDataset = getActiveChartDataset;
+  }
+})();

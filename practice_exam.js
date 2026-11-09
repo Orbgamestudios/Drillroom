@@ -4174,6 +4174,16 @@ function paintHistory() {
   tip.innerHTML = `<strong>Score Average Control:</strong> Click the <strong>In Avg / Exclude</strong> button on any row in the table below to toggle whether that exam is included in your average without losing its record.`;
   dash.appendChild(tip);
 
+  // Interactive Performance Analytics & Pacing Charts
+  const chartMount = document.createElement("div");
+  chartMount.id = "peHistChartMount";
+  dash.appendChild(chartMount);
+  if (typeof renderPerformanceCharts === "function") {
+    renderPerformanceCharts(chartMount);
+  } else if (typeof window !== "undefined" && typeof window.renderPerformanceCharts === "function") {
+    window.renderPerformanceCharts(chartMount);
+  }
+
   // History Table
   if (hist.length) {
     const tableWrap = document.createElement("div");

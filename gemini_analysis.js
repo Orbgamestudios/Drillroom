@@ -111,12 +111,12 @@
     for (const model of modelsToTry) {
       try {
         const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(apiKey)}`;
+        const contents = Array.isArray(prompt)
+          ? prompt
+          : [{ parts: [{ text: String(prompt) }] }];
+
         const payload = {
-          contents: [
-            {
-              parts: [{ text: prompt }]
-            }
-          ],
+          contents: contents,
           generationConfig: {
             temperature: 0.35,
             topK: 40,
@@ -1058,6 +1058,13 @@ Give the student a prioritized checklist of 3–4 ultra-specific topics, equatio
   function renderCompletedAnalysis(container, markdownText, modelUsed, info) {
     const htmlReport = renderMarkdown(markdownText);
 
+    const chatStorageKey = "drillroom_chat_" + info.examId;
+    let chatHistory = [];
+    try {
+      chatHistory = JSON.parse(localStorage.getItem(chatStorageKey)) || [];
+      if (!Array.isArray(chatHistory)) chatHistory = [];
+    } catch (e) { chatHistory = []; }
+
     container.innerHTML = `
       <div style="margin-bottom:16px;padding-bottom:14px;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px">
         <div style="font-size:12.5px;color:var(--faint)">
@@ -1072,7 +1079,165 @@ Give the student a prioritized checklist of 3–4 ultra-specific topics, equatio
       <div class="gemini-markdown-content" style="color:var(--soft);line-height:1.6">
         ${htmlReport}
       </div>
+
+      <!-- Follow-Up Q&A Section -->
+      <div class="gemini-followup-container" style="margin-top:28px;border-top:2px solid var(--line);padding-top:22px">
+        <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:12px">
+          <div>
+            <div style="font-size:15px;font-weight:700;color:var(--nav)">Ask Follow-Up Questions to Gemini</div>
+            <div style="font-size:12.5px;color:var(--faint)">Clarify rationales, probe why distractors were chosen, or request targeted drills for this section.</div>
+          </div>
+          <div style="display:flex;align-items:center;gap:8px">
+            <span style="font-size:11px;font-weight:700;letter-spacing:0.5px;background:#EBF2FA;color:#185A9D;padding:3px 9px;border-radius:3px">INTERACTIVE TUTOR</span>
+            <button class="btn" id="gClearChatBtn" style="font-size:11px;padding:3px 8px;${chatHistory.length ? "" : "display:none"}">Clear Chat</button>
+          </div>
+        </div>
+
+        <div id="gFollowupChatStream" style="display:flex;flex-direction:column;gap:12px;margin-bottom:14px"></div>
+
+        <!-- Quick suggestion chips -->
+        <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px" id="gPromptChips">
+          <button class="btn g-chip" data-prompt="How do I eliminate 50/50 guesses on Inference questions without running out of time?" style="font-size:11.5px;padding:5px 11px;background:#F8FAFC;border:1px solid #CBD5E1">How to eliminate 50/50 guesses?</button>
+          <button class="btn g-chip" data-prompt="Break down why the correct answer to my most confident miss works and how the distractor was engineered." style="font-size:11.5px;padding:5px 11px;background:#F8FAFC;border:1px solid #CBD5E1">Break down my most confident miss</button>
+          <button class="btn g-chip" data-prompt="Give me 2 specific drills to optimize my passage reading speed and keep it under 3m 30s." style="font-size:11.5px;padding:5px 11px;background:#F8FAFC;border:1px solid #CBD5E1">2 drills for passage speed</button>
+          <button class="btn g-chip" data-prompt="What was my biggest cognitive blindspot across this entire practice section?" style="font-size:11.5px;padding:5px 11px;background:#F8FAFC;border:1px solid #CBD5E1">My biggest cognitive blindspot?</button>
+        </div>
+
+        <form id="gFollowupForm" style="display:flex;gap:8px;align-items:center" onsubmit="return false;">
+          <input type="text" id="gFollowupInput" placeholder="Ask a follow-up question about this section's diagnostic, questions, or strategy..." 
+                 style="flex:1;padding:9px 13px;border:1px solid var(--line2);border-radius:4px;font-size:13px;outline:none;background:#fff" autocomplete="off" />
+          <button class="btn pri" id="gFollowupSendBtn" type="submit" style="padding:9px 18px;font-size:13px;white-space:nowrap">Ask Gemini</button>
+        </form>
+      </div>
     `;
+
+    const chatStream = document.getElementById("gFollowupChatStream");
+    const clearChatBtn = document.getElementById("gClearChatBtn");
+    const followupForm = document.getElementById("gFollowupForm");
+    const followupInput = document.getElementById("gFollowupInput");
+    const followupSendBtn = document.getElementById("gFollowupSendBtn");
+
+    function renderChatMessage(msg) {
+      if (!chatStream) return;
+      const row = document.createElement("div");
+      if (msg.role === "user") {
+        row.style.cssText = "align-self:flex-end;max-width:85%;background:#1B3A5C;color:#FFFFFF;padding:10px 14px;border-radius:8px 8px 1px 8px;font-size:13px;line-height:1.5;box-shadow:0 1px 3px rgba(0,0,0,0.12)";
+        row.textContent = msg.text;
+      } else {
+        row.style.cssText = "align-self:flex-start;max-width:92%;background:#FFFFFF;color:var(--soft);border:1px solid var(--line);border-left:4px solid #185A9D;padding:12px 16px;border-radius:2px 8px 8px 8px;font-size:13px;line-height:1.6;box-shadow:0 1px 3px rgba(0,0,0,0.06)";
+        row.innerHTML = `
+          <div style="font-size:11px;font-weight:700;color:#185A9D;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:6px">Gemini Tutor Response</div>
+          <div class="gemini-followup-body">${renderMarkdown(msg.text)}</div>
+        `;
+      }
+      chatStream.appendChild(row);
+    }
+
+    // Render existing chat history
+    if (chatHistory.length && chatStream) {
+      chatHistory.forEach(renderChatMessage);
+      if (clearChatBtn) clearChatBtn.style.display = "inline-block";
+    }
+
+    // Clear chat handler
+    if (clearChatBtn) {
+      clearChatBtn.onclick = () => {
+        if (!confirm("Clear this follow-up conversation history?")) return;
+        chatHistory = [];
+        try { localStorage.removeItem(chatStorageKey); } catch (e) {}
+        if (chatStream) chatStream.innerHTML = "";
+        clearChatBtn.style.display = "none";
+      };
+    }
+
+    // Suggestion chips handler
+    const promptChips = document.getElementById("gPromptChips");
+    if (promptChips) {
+      promptChips.querySelectorAll(".g-chip").forEach(btn => {
+        btn.onclick = () => {
+          if (followupInput) {
+            followupInput.value = btn.dataset.prompt || btn.textContent.trim();
+            handleFollowupSubmit();
+          }
+        };
+      });
+    }
+
+    // Submit follow-up question
+    async function handleFollowupSubmit() {
+      if (!followupInput) return;
+      const questionText = followupInput.value.trim();
+      if (!questionText) return;
+
+      const apiKey = getApiKey();
+      if (!apiKey) {
+        showGeminiSettingsModal();
+        return;
+      }
+
+      followupInput.value = "";
+      followupInput.disabled = true;
+      if (followupSendBtn) followupSendBtn.disabled = true;
+
+      // Add user message to UI and history
+      const userMsg = { role: "user", text: questionText };
+      chatHistory.push(userMsg);
+      renderChatMessage(userMsg);
+
+      // Typing placeholder
+      const placeholder = document.createElement("div");
+      placeholder.id = "gTypingPlaceholder";
+      placeholder.style.cssText = "align-self:flex-start;max-width:92%;background:#F8FAFC;border:1px dashed var(--line);padding:10px 14px;border-radius:4px;font-size:12.5px;color:var(--faint);font-style:italic;display:flex;align-items:center;gap:8px";
+      placeholder.innerHTML = `<span>Gemini is analyzing your question...</span>`;
+      if (chatStream) chatStream.appendChild(placeholder);
+      if (placeholder.scrollIntoView) placeholder.scrollIntoView({ behavior: "smooth", block: "nearest" });
+
+      try {
+        const initialPrompt = buildDiagnosticPrompt(info);
+        const contents = [
+          { role: "user", parts: [{ text: initialPrompt }] },
+          { role: "model", parts: [{ text: markdownText }] }
+        ];
+
+        // Append conversation history
+        chatHistory.forEach(turn => {
+          contents.push({
+            role: turn.role === "user" ? "user" : "model",
+            parts: [{ text: turn.text }]
+          });
+        });
+
+        const res = await callGeminiAPI(contents, apiKey, modelUsed);
+        if (placeholder.parentNode) placeholder.parentNode.removeChild(placeholder);
+
+        const modelMsg = { role: "model", text: res.text };
+        chatHistory.push(modelMsg);
+        renderChatMessage(modelMsg);
+
+        try {
+          localStorage.setItem(chatStorageKey, JSON.stringify(chatHistory));
+        } catch (e) {}
+
+        if (clearChatBtn) clearChatBtn.style.display = "inline-block";
+      } catch (err) {
+        if (placeholder.parentNode) placeholder.parentNode.removeChild(placeholder);
+        const errRow = document.createElement("div");
+        errRow.style.cssText = "align-self:flex-start;max-width:92%;background:#FDF0ED;border:1px solid var(--bad);color:var(--bad);padding:10px 14px;border-radius:4px;font-size:12.5px";
+        errRow.textContent = `Error getting answer: ${err.message}`;
+        if (chatStream) chatStream.appendChild(errRow);
+      } finally {
+        followupInput.disabled = false;
+        if (followupSendBtn) followupSendBtn.disabled = false;
+        followupInput.focus();
+      }
+    }
+
+    if (followupForm) {
+      followupForm.onsubmit = (e) => {
+        e.preventDefault();
+        handleFollowupSubmit();
+      };
+    }
 
     const copyBtn = document.getElementById("gCopyBtn");
     if (copyBtn) {
@@ -1280,6 +1445,9 @@ Give the student a prioritized checklist of 3–4 ultra-specific topics, equatio
   window.renderGeminiMarkdown = renderMarkdown;
   window.buildDiagnosticPrompt = buildDiagnosticPrompt;
   window.extractCurrentExamInfo = extractCurrentExamInfo;
+  window.callGeminiAPI = callGeminiAPI;
+  window.getGeminiApiKey = getApiKey;
+  window.getGeminiModel = getModel;
 
   // Auto-init hooks after DOM is ready
   window.addEventListener("DOMContentLoaded", () => {
