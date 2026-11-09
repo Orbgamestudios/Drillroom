@@ -235,7 +235,9 @@
 
   /* ===== CHART STATE ===== */
   const chartState = {
-    scope: "across", // "across" | "within"
+    xAxisMode: "passages_all", // "passages_all" | "passages_single" | "sessions" | "questions_single"
+    yMetric: "passageWpm",
+    scope: "passages_all", // backward-compatible alias
     selectedSessionId: null,
     acrossX: "session", // "session" | "date"
     acrossY: "avgPassageReadSec",
@@ -419,7 +421,15 @@
   function getActiveChartDataset() {
     const allSessions = getAllEnrichedSessions();
 
+    // Backward-compatibility synchronization with test suites
+    let activeMode = chartState.xAxisMode || "passages_all";
     if (chartState.scope === "across") {
+      activeMode = "sessions";
+    } else if (chartState.scope === "within") {
+      activeMode = (chartState.withinX === "question") ? "questions_single" : "passages_single";
+    }
+
+    if (activeMode === "sessions" || chartState.scope === "across") {
       // Filter sessions
       let filtered = allSessions;
       if (chartState.subjectFilter !== "all") {
@@ -433,18 +443,19 @@
         }
       }
 
-      const metricDef = METRIC_DEFS[chartState.acrossY] || METRIC_DEFS.avgPassageReadSec;
+      const activeY = (chartState.scope === "across" && chartState.acrossY) ? chartState.acrossY : (chartState.yMetric || chartState.acrossY || "avgPassageReadSec");
+      const metricDef = METRIC_DEFS[activeY] || METRIC_DEFS.avgPassageReadSec;
       const points = filtered.map((s, idx) => {
         let yVal = 0;
-        if (chartState.acrossY === "avgPassageReadSec") yVal = s.avgPassageReadSec;
-        else if (chartState.acrossY === "avgPassageWpm") yVal = s.avgPassageWpm;
-        else if (chartState.acrossY === "scaledScore") yVal = s.scaledScore;
-        else if (chartState.acrossY === "pct") yVal = s.pct;
-        else if (chartState.acrossY === "avgQSec") yVal = s.avgQSec;
-        else if (chartState.acrossY === "solidRatio") yVal = s.solidRatio;
-        else if (chartState.acrossY === "guessCount") yVal = s.guessCount;
-        else if (chartState.acrossY === "netSecondGuessing") yVal = s.netSecondGuessing;
-        else if (chartState.acrossY === "timeUsedMinutes") yVal = s.timeUsedMinutes;
+        if (activeY === "avgPassageReadSec") yVal = s.avgPassageReadSec;
+        else if (activeY === "avgPassageWpm") yVal = s.avgPassageWpm;
+        else if (activeY === "scaledScore") yVal = s.scaledScore;
+        else if (activeY === "pct") yVal = s.pct;
+        else if (activeY === "avgQSec") yVal = s.avgQSec;
+        else if (activeY === "solidRatio") yVal = s.solidRatio;
+        else if (activeY === "guessCount") yVal = s.guessCount;
+        else if (activeY === "netSecondGuessing") yVal = s.netSecondGuessing;
+        else if (activeY === "timeUsedMinutes") yVal = s.timeUsedMinutes;
 
         const d = new Date(s.ts || Date.now());
         const dateStr = d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
@@ -467,13 +478,80 @@
 
       return {
         scope: "across",
+        xAxisMode: "sessions",
+        xAxisLabel: "Sessions (Chronological Trajectory)",
         metricDef: metricDef,
         points: points,
         totalItems: filtered.length,
         emptyMessage: filtered.length === 0 ? "No completed sections match current subject and duration filters." : null
       };
+    } else if (activeMode === "passages_all") {
+      // INDIVIDUAL PASSAGES ACROSS ALL SECTIONS
+      let filtered = allSessions;
+      if (chartState.subjectFilter !== "all") {
+        filtered = filtered.filter(s => s.sec === chartState.subjectFilter);
+      }
+      if (chartState.durationFilter !== "all") {
+        if (chartState.durationFilter === "45") {
+          filtered = filtered.filter(s => s.isHalf || String(s.duration) === "45" || (s.examId && s.examId.includes("_h")));
+        } else {
+          filtered = filtered.filter(s => String(s.duration) === String(chartState.durationFilter));
+        }
+      }
+
+      const activeY = chartState.yMetric || "passageWpm";
+      const metricDef = METRIC_DEFS[activeY] || METRIC_DEFS.passageWpm;
+      const points = [];
+      let globalIdx = 0;
+
+      filtered.forEach((s, sIdx) => {
+        const pList = s.passageStats || [];
+        pList.forEach((p, pIdx) => {
+          if (p.isSkipped) return;
+          let yVal = 0;
+          if (activeY === "passageReadSec" || activeY === "avgPassageReadSec") yVal = p.readSec || p.seconds || 0;
+          else if (activeY === "passageWpm" || activeY === "avgPassageWpm") yVal = p.wpm || (p.readSec > 0 ? Math.round(p.wordCount / (p.readSec / 60)) : 200);
+          else if (activeY === "passageWordCount") yVal = p.wordCount || 550;
+          else if (activeY === "passageAccuracy" || activeY === "pct") yVal = p.acc !== undefined ? p.acc : (s.pct || 0);
+          else if (activeY === "passageAvgQTime" || activeY === "avgQSec") yVal = p.avgQSec || s.avgQSec || 60;
+          else if (activeY === "passageTotalTime") yVal = p.totalTime || 0;
+          else if (activeY === "passageGuesses" || activeY === "guessCount") yVal = p.guesses || 0;
+          else if (activeY === "passageFatigueDelta") yVal = p.fatigueDelta || 0;
+          else yVal = p.wpm || 0;
+
+          const sNum = sIdx + 1;
+          const pNum = p.pNumber || (pIdx + 1);
+          const d = new Date(s.ts || Date.now());
+          const dateStr = d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+
+          points.push({
+            xIndex: globalIdx++,
+            label: `S${sNum} Passage ${pNum}: ${p.topic || 'Passage ' + pNum} (${s.sec} \u2022 ${dateStr})`,
+            shortLabel: filtered.length > 1 ? `S${sNum}-P${pNum}` : `Passage ${pNum}`,
+            date: dateStr,
+            sec: s.sec,
+            examTitle: s.suiteTitle || s.label,
+            wordCount: p.wordCount,
+            val: yVal,
+            displayVal: metricDef.formatVal(yVal),
+            rawPassage: p,
+            session: s
+          });
+        });
+      });
+
+      return {
+        scope: "passages_all",
+        xAxisMode: "passages_all",
+        xAxisLabel: "Individual Passages (All Sections Chronologically)",
+        metricDef: metricDef,
+        points: points,
+        totalItems: points.length,
+        totalSessions: filtered.length,
+        emptyMessage: points.length === 0 ? "No passage telemetry found across completed sections." : null
+      };
     } else {
-      // WITHIN SINGLE SESSION
+      // SINGLE-SESSION (Passages or Questions)
       let targetSession = null;
       if (chartState.selectedSessionId) {
         targetSession = allSessions.find(s => s.id === chartState.selectedSessionId);
@@ -486,6 +564,8 @@
       if (!targetSession) {
         return {
           scope: "within",
+          xAxisMode: activeMode,
+          xAxisLabel: "Individual Passages (1 Specific Section)",
           metricDef: METRIC_DEFS.passageReadSec,
           points: [],
           totalItems: 0,
@@ -493,11 +573,12 @@
         };
       }
 
-      if (chartState.withinX === "question") {
-        const metricDef = METRIC_DEFS[chartState.withinY] || METRIC_DEFS.qTime;
+      if (activeMode === "questions_single" || chartState.withinX === "question") {
+        const activeY = (chartState.scope === "within" && chartState.withinY) ? chartState.withinY : (chartState.yMetric || "qTime");
+        const metricDef = METRIC_DEFS[activeY] || METRIC_DEFS.qTime;
         const qList = targetSession.questions || [];
         const points = qList.map((q, idx) => {
-          const yVal = chartState.withinY === "qOutcomeScore" ? q.outcomeScore : q.time;
+          const yVal = activeY === "qOutcomeScore" ? q.outcomeScore : q.time;
           return {
             xIndex: idx,
             label: `Question ${q.qNumber}`,
@@ -512,6 +593,8 @@
         return {
           scope: "within",
           subScope: "question",
+          xAxisMode: "questions_single",
+          xAxisLabel: `Questions: ${targetSession.suiteTitle || targetSession.label}`,
           session: targetSession,
           metricDef: metricDef,
           points: points,
@@ -519,19 +602,20 @@
           emptyMessage: points.length === 0 ? "No question telemetry in this session." : null
         };
       } else {
-        // PASSAGE-BY-PASSAGE
-        const metricDef = METRIC_DEFS[chartState.withinY] || METRIC_DEFS.passageReadSec;
+        // PASSAGES WITHIN 1 SPECIFIC SECTION
+        const activeY = (chartState.scope === "within" && chartState.withinY) ? chartState.withinY : (chartState.yMetric || "passageReadSec");
+        const metricDef = METRIC_DEFS[activeY] || METRIC_DEFS.passageReadSec;
         const pList = targetSession.passageStats || [];
         const points = pList.map((p, idx) => {
           let yVal = 0;
-          if (chartState.withinY === "passageReadSec") yVal = p.readSec || p.seconds || 0;
-          else if (chartState.withinY === "passageWpm") yVal = p.wpm || 0;
-          else if (chartState.withinY === "passageWordCount") yVal = p.wordCount || 550;
-          else if (chartState.withinY === "passageAccuracy") yVal = p.acc || 0;
-          else if (chartState.withinY === "passageAvgQTime") yVal = p.avgQSec || 60;
-          else if (chartState.withinY === "passageTotalTime") yVal = p.totalTime || 0;
-          else if (chartState.withinY === "passageGuesses") yVal = p.guesses || 0;
-          else if (chartState.withinY === "passageFatigueDelta") yVal = p.fatigueDelta || 0;
+          if (activeY === "passageReadSec") yVal = p.readSec || p.seconds || 0;
+          else if (activeY === "passageWpm") yVal = p.wpm || 0;
+          else if (activeY === "passageWordCount") yVal = p.wordCount || 550;
+          else if (activeY === "passageAccuracy") yVal = p.acc || 0;
+          else if (activeY === "passageAvgQTime") yVal = p.avgQSec || 60;
+          else if (activeY === "passageTotalTime") yVal = p.totalTime || 0;
+          else if (activeY === "passageGuesses") yVal = p.guesses || 0;
+          else if (activeY === "passageFatigueDelta") yVal = p.fatigueDelta || 0;
 
           return {
             xIndex: idx,
@@ -549,6 +633,8 @@
         return {
           scope: "within",
           subScope: "passage",
+          xAxisMode: "passages_single",
+          xAxisLabel: `Passages: ${targetSession.suiteTitle || targetSession.label}`,
           session: targetSession,
           metricDef: metricDef,
           points: points,
@@ -747,16 +833,27 @@
       ctx.arc(x, y, isHovered ? 2.5 : 2, 0, Math.PI * 2);
       ctx.fill();
 
-      // X Tick Label
-      ctx.save();
-      ctx.translate(x, padT + plotH + 16);
-      ctx.rotate(-Math.PI / 6);
-      ctx.fillStyle = isHovered ? "#0F172A" : "#64748B";
-      ctx.font = isHovered ? "bold 11px Arial, sans-serif" : "11px Arial, sans-serif";
-      ctx.textAlign = "right";
-      ctx.fillText(p.shortLabel, 0, 0);
-      ctx.restore();
+      // X Tick Label (thin out automatically if many data points)
+      const step = pts.length > 20 ? Math.ceil(pts.length / 14) : 1;
+      if (idx % step === 0 || idx === pts.length - 1 || isHovered) {
+        ctx.save();
+        ctx.translate(x, padT + plotH + 16);
+        ctx.rotate(-Math.PI / 6);
+        ctx.fillStyle = isHovered ? "#0F172A" : "#64748B";
+        ctx.font = isHovered ? "bold 11px Arial, sans-serif" : "11px Arial, sans-serif";
+        ctx.textAlign = "right";
+        ctx.fillText(p.shortLabel, 0, 0);
+        ctx.restore();
+      }
     });
+
+    // Axis interactive hints on canvas margins
+    ctx.fillStyle = "#94A3B8";
+    ctx.font = "bold 9.5px Arial, sans-serif";
+    ctx.textAlign = "left";
+    ctx.fillText("Y-AXIS (CLICK TO CHANGE)", padL, padT - 10);
+    ctx.textAlign = "center";
+    ctx.fillText("X-AXIS: " + (dataset.xAxisLabel || "").toUpperCase() + " (CLICK TO CHANGE)", padL + plotW / 2, height - 10);
 
     // 6. Draw interactive Tooltip card
     if (hoveredIdx >= 0 && hoveredIdx < pts.length) {
@@ -842,9 +939,11 @@
     ctx.fillStyle = "#0F172A";
     ctx.font = "bold 18px Arial, sans-serif";
     ctx.textAlign = "left";
-    const subTitle = dataset.scope === "across"
-      ? `Performance Trajectory: ${dataset.metricDef.label} (Across All Sessions)`
-      : `Single-Session Analysis: ${dataset.session?.suiteTitle || dataset.session?.label || 'Session'} (${dataset.metricDef.label})`;
+    const subTitle = dataset.scope === "passages_all"
+      ? `Individual Passage Analysis: ${dataset.metricDef.label} (All Sections Chronologically)`
+      : (dataset.scope === "across"
+        ? `Performance Trajectory: ${dataset.metricDef.label} (Across All Sessions)`
+        : `Single-Section Analysis: ${dataset.session?.suiteTitle || dataset.session?.label || 'Session'} (${dataset.metricDef.label})`);
     ctx.fillText(subTitle, 32, 105);
 
     // Render Stats Ribbon
@@ -943,9 +1042,15 @@
     const maxVal = Math.max(...vals);
     const trendDelta = (vals[vals.length - 1] - vals[0]).toFixed(1);
 
+    const scopeDesc = dataset.scope === "passages_all"
+      ? `Across All Individual Passages Chronologically (${dataset.points.length} passages across ${dataset.totalSessions || 1} sections)`
+      : (dataset.scope === "across"
+        ? `Across Chronological Practice Sessions (${dataset.points.length} sessions)`
+        : `Within Single Session (${dataset.session?.suiteTitle || dataset.session?.label || 'Session'})`);
+
     const promptText = `You are a world-class MCAT cognitive coach and former AAMC psychometrician.
 The student is inspecting their performance analytics chart inside the DrillRoom MCAT app:
-- **Scope:** ${dataset.scope === "across" ? "Across Chronological Practice Sessions" : "Within Single Session (Passage-by-Passage)"}
+- **Scope:** ${scopeDesc}
 - **Metric Analyzed:** ${dataset.metricDef.label} (${dataset.metricDef.unit})
 - **AAMC Target Benchmark:** ${dataset.metricDef.benchmark ? (dataset.metricDef.benchmark.label || dataset.metricDef.benchmark.min + '-' + dataset.metricDef.benchmark.max) : "Standard MCAT pace"}
 - **Dataset Chronology (${dataset.points.length} points):**
@@ -988,36 +1093,31 @@ Generate a concise, high-impact MCAT Trend Assessment (under 250 words total) st
     container.innerHTML = "";
 
     const allSessions = getAllEnrichedSessions();
+    if (!chartState.selectedSessionId && allSessions.length) {
+      chartState.selectedSessionId = allSessions[allSessions.length - 1].id;
+    }
+
     const dataset = getActiveChartDataset();
+    const activeMode = dataset.xAxisMode || chartState.xAxisMode || "passages_all";
 
     const wrap = document.createElement("div");
     wrap.className = "pe-chart-dashboard";
     wrap.style.cssText = "margin:20px 0 24px 0;background:#FFFFFF;border:1px solid var(--line);border-radius:6px;box-shadow:0 2px 8px rgba(0,0,0,0.06);padding:20px";
 
-    // 1. Dashboard Header with Scope Toggle & Action Buttons
+    // 1. Dashboard Header (Title & Action Buttons)
     const headerEl = document.createElement("div");
-    headerEl.style.cssText = "display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;margin-bottom:16px;border-bottom:1.5px solid #E2E8F0;padding-bottom:14px";
+    headerEl.style.cssText = "display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;margin-bottom:14px;border-bottom:1.5px solid #E2E8F0;padding-bottom:12px";
     headerEl.innerHTML = `
       <div>
         <div style="font-size:17px;font-weight:700;color:var(--nav);display:flex;align-items:center;gap:8px">
-          Performance Analytics &amp; Pacing Trajectory
+          Performance Analytics &amp; Telemetry
         </div>
-        <div style="font-size:12.5px;color:var(--faint);margin-top:2px">
-          Track your passage reading speed, question answering pace, and scaled scores chronologically across sessions or within individual passages.
+        <div style="font-size:12px;color:var(--faint);margin-top:2px">
+          Select any X-axis and Y-axis directly on the chart below to analyze reading speeds, question pace, and trajectories.
         </div>
       </div>
       <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
-        <!-- Scope Switcher -->
-        <div style="display:flex;background:#EDEFF2;padding:2px;border-radius:4px">
-          <button class="btn" id="btnScopeAcross" style="font-size:12px;padding:5px 12px;border-radius:3px;${chartState.scope === 'across' ? 'background:#185A9D;color:#fff;font-weight:700' : 'color:var(--soft)'}">
-            Across All Sessions
-          </button>
-          <button class="btn" id="btnScopeWithin" style="font-size:12px;padding:5px 12px;border-radius:3px;${chartState.scope === 'within' ? 'background:#185A9D;color:#fff;font-weight:700' : 'color:var(--soft)'}">
-            Single-Session Deep Dive
-          </button>
-        </div>
-        <!-- Export & AI Actions -->
-        <button class="btn" id="btnDownloadChartPNG" style="font-size:12px;padding:5px 12px;border:1px solid #CBD5E1;background:#F8FAFC" title="Download chart image">
+        <button class="btn" id="btnDownloadChartPNG" style="font-size:12px;padding:5px 12px;border:1px solid #CBD5E1;background:#F8FAFC" title="Download high-resolution chart image">
           Download Chart (PNG)
         </button>
         <button class="btn" id="btnExportChartCSV" style="font-size:12px;padding:5px 12px;border:1px solid #CBD5E1;background:#F8FAFC" title="Export raw data to CSV">
@@ -1030,101 +1130,7 @@ Generate a concise, high-impact MCAT Trend Assessment (under 250 words total) st
     `;
     wrap.appendChild(headerEl);
 
-    // 2. Control Bar (Axis Customization & Filters)
-    const ctrlBar = document.createElement("div");
-    ctrlBar.style.cssText = "display:flex;gap:14px;flex-wrap:wrap;align-items:center;background:#F8FAFC;padding:12px 14px;border:1px solid #E2E8F0;border-radius:4px;margin-bottom:16px;font-size:12.5px";
-
-    if (chartState.scope === "across") {
-      ctrlBar.innerHTML = `
-        <label style="display:flex;align-items:center;gap:6px;font-weight:600;color:var(--soft)">
-          Y-Axis Metric:
-          <select id="selAcrossYMetric" style="padding:5px 8px;border:1px solid var(--line);border-radius:3px;background:#fff;font-size:12.5px">
-            <option value="avgPassageReadSec" ${chartState.acrossY === 'avgPassageReadSec' ? 'selected' : ''}>Avg Passage Reading Time (3:00 - 4:00 Benchmark)</option>
-            <option value="avgPassageWpm" ${chartState.acrossY === 'avgPassageWpm' ? 'selected' : ''}>Avg Passage Reading Pace (200 - 260 WPM Target)</option>
-            <option value="scaledScore" ${chartState.acrossY === 'scaledScore' ? 'selected' : ''}>MCAT Scaled Score (118 - 132)</option>
-            <option value="pct" ${chartState.acrossY === 'pct' ? 'selected' : ''}>Raw Accuracy (%)</option>
-            <option value="avgQSec" ${chartState.acrossY === 'avgQSec' ? 'selected' : ''}>Avg Pure Question Solving Time (s/Q)</option>
-            <option value="solidRatio" ${chartState.acrossY === 'solidRatio' ? 'selected' : ''}>Solid Mastery Ratio (%)</option>
-            <option value="guessCount" ${chartState.acrossY === 'guessCount' ? 'selected' : ''}>Total Guesses &amp; Coin Flips</option>
-            <option value="netSecondGuessing" ${chartState.acrossY === 'netSecondGuessing' ? 'selected' : ''}>Second-Guessing Net Impact (Points)</option>
-            <option value="timeUsedMinutes" ${chartState.acrossY === 'timeUsedMinutes' ? 'selected' : ''}>Total Section Elapsed Time (Minutes)</option>
-          </select>
-        </label>
-
-        <label style="display:flex;align-items:center;gap:6px;font-weight:600;color:var(--soft)">
-          X-Axis Order:
-          <select id="selAcrossXAxis" style="padding:5px 8px;border:1px solid var(--line);border-radius:3px;background:#fff;font-size:12.5px">
-            <option value="session" ${chartState.acrossX === 'session' ? 'selected' : ''}>Chronological Sessions (Session 1, 2, ...)</option>
-            <option value="date" ${chartState.acrossX === 'date' ? 'selected' : ''}>Timeline Date &amp; Subject</option>
-          </select>
-        </label>
-
-        <label style="display:flex;align-items:center;gap:6px;font-weight:600;color:var(--soft)">
-          Subject Filter:
-          <select id="selChartSubject" style="padding:5px 8px;border:1px solid var(--line);border-radius:3px;background:#fff;font-size:12.5px">
-            <option value="all" ${chartState.subjectFilter === 'all' ? 'selected' : ''}>All 4 Subjects</option>
-            <option value="C/P" ${chartState.subjectFilter === 'C/P' ? 'selected' : ''}>C/P Only</option>
-            <option value="CARS" ${chartState.subjectFilter === 'CARS' ? 'selected' : ''}>CARS Only</option>
-            <option value="B/B" ${chartState.subjectFilter === 'B/B' ? 'selected' : ''}>B/B Only</option>
-            <option value="P/S" ${chartState.subjectFilter === 'P/S' ? 'selected' : ''}>P/S Only</option>
-          </select>
-        </label>
-
-        <label style="display:flex;align-items:center;gap:6px;font-weight:600;color:var(--soft)">
-          Length:
-          <select id="selChartDuration" style="padding:5px 8px;border:1px solid var(--line);border-radius:3px;background:#fff;font-size:12.5px">
-            <option value="all" ${chartState.durationFilter === 'all' ? 'selected' : ''}>All Durations</option>
-            <option value="90" ${chartState.durationFilter === '90' ? 'selected' : ''}>90m Full Sections Only</option>
-            <option value="45" ${chartState.durationFilter === '45' ? 'selected' : ''}>~45m Halves Only</option>
-            <option value="60" ${chartState.durationFilter === '60' ? 'selected' : ''}>60m Paced Sections Only</option>
-          </select>
-        </label>
-      `;
-    } else {
-      // SINGLE-SESSION CONTROLS
-      ctrlBar.innerHTML = `
-        <label style="display:flex;align-items:center;gap:6px;font-weight:600;color:var(--soft)">
-          Select Completed Session:
-          <select id="selWithinSession" style="padding:5px 8px;border:1px solid var(--line);border-radius:3px;background:#fff;font-size:12.5px;max-width:260px">
-            ${allSessions.slice().reverse().map(s => `
-              <option value="${s.id}" ${s.id === chartState.selectedSessionId ? 'selected' : ''}>
-                ${new Date(s.ts || Date.now()).toLocaleDateString([], {month:'short', day:'numeric'})} &bull; ${s.sec} - ${s.suiteTitle || s.label} (${s.scaledScore || 125}/132)
-              </option>
-            `).join("")}
-          </select>
-        </label>
-
-        <label style="display:flex;align-items:center;gap:6px;font-weight:600;color:var(--soft)">
-          Breakdown Level (X-Axis):
-          <select id="selWithinXAxis" style="padding:5px 8px;border:1px solid var(--line);border-radius:3px;background:#fff;font-size:12.5px">
-            <option value="passage" ${chartState.withinX === 'passage' ? 'selected' : ''}>Chronologically Each Passage (Passage 1, 2, ...)</option>
-            <option value="question" ${chartState.withinX === 'question' ? 'selected' : ''}>Chronologically Each Question (Q1, Q2, ...)</option>
-          </select>
-        </label>
-
-        <label style="display:flex;align-items:center;gap:6px;font-weight:600;color:var(--soft)">
-          Metric (Y-Axis):
-          <select id="selWithinYMetric" style="padding:5px 8px;border:1px solid var(--line);border-radius:3px;background:#fff;font-size:12.5px">
-            ${chartState.withinX === 'question' ? `
-              <option value="qTime" ${chartState.withinY === 'qTime' ? 'selected' : ''}>Question Solving Time (Seconds/Q)</option>
-              <option value="qOutcomeScore" ${chartState.withinY === 'qOutcomeScore' ? 'selected' : ''}>Confidence &amp; Mastery Tier (Solid, 50/50, Guess, Miss)</option>
-            ` : `
-              <option value="passageReadSec" ${chartState.withinY === 'passageReadSec' ? 'selected' : ''}>Passage Reading Time (3:00 - 4:00 Benchmark)</option>
-              <option value="passageWpm" ${chartState.withinY === 'passageWpm' ? 'selected' : ''}>Passage Reading Pace (200 - 260 WPM Target)</option>
-              <option value="passageWordCount" ${chartState.withinY === 'passageWordCount' ? 'selected' : ''}>Passage Word Count</option>
-              <option value="passageAccuracy" ${chartState.withinY === 'passageAccuracy' ? 'selected' : ''}>Passage Question Accuracy (%)</option>
-              <option value="passageAvgQTime" ${chartState.withinY === 'passageAvgQTime' ? 'selected' : ''}>Avg Question Solving Time on Passage (s/Q)</option>
-              <option value="passageTotalTime" ${chartState.withinY === 'passageTotalTime' ? 'selected' : ''}>Total Passage Duration (Reading + Questions)</option>
-              <option value="passageGuesses" ${chartState.withinY === 'passageGuesses' ? 'selected' : ''}>Guesses &amp; 50/50s on Passage</option>
-              <option value="passageFatigueDelta" ${chartState.withinY === 'passageFatigueDelta' ? 'selected' : ''}>Fatigue Delta vs Passage 1 (Slowing Index)</option>
-            `}
-          </select>
-        </label>
-      `;
-    }
-    wrap.appendChild(ctrlBar);
-
-    // 3. Stats Ribbon (Summary Analytics)
+    // 2. Stats Ribbon (Summary Analytics)
     const statsRibbon = document.createElement("div");
     statsRibbon.style.cssText = "display:flex;gap:18px;flex-wrap:wrap;margin-bottom:14px;padding:8px 12px;background:#F1F5F9;border-radius:4px;font-size:12px;color:#334155";
 
@@ -1144,18 +1150,150 @@ Generate a concise, high-impact MCAT Trend Assessment (under 250 words total) st
     `;
     wrap.appendChild(statsRibbon);
 
-    // 4. Interactive Canvas
+    // 3. THE GRAPH STAGE (Chart Stage with On-Graph Axis Selectors)
+    const graphStage = document.createElement("div");
+    graphStage.style.cssText = "position:relative;background:#FFFFFF;border:1.5px solid #CBD5E1;border-radius:6px;padding:12px 14px 14px 14px;margin-bottom:14px;box-shadow:0 1px 4px rgba(0,0,0,0.04)";
+
+    // Top Bar: Direct Y-Axis Selector & Filters (aligned right over the Y-axis column)
+    const topBar = document.createElement("div");
+    topBar.style.cssText = "display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:8px;padding-bottom:6px;border-bottom:1px solid #F1F5F9";
+
+    // Generate Y-Axis Options based on active X-Axis Mode
+    let yOptionsHtml = "";
+    const activeY = dataset.metricDef.id;
+
+    if (activeMode === "passages_all" || activeMode === "passages_single") {
+      yOptionsHtml = `
+        <option value="passageWpm" ${activeY === 'passageWpm' ? 'selected' : ''}>Passage Reading Speed (WPM) — AAMC Target (200 - 260 WPM)</option>
+        <option value="passageReadSec" ${activeY === 'passageReadSec' ? 'selected' : ''}>Passage Reading Time — AAMC Benchmark (3:00 - 4:00)</option>
+        <option value="passageAccuracy" ${activeY === 'passageAccuracy' ? 'selected' : ''}>Passage Question Accuracy (%)</option>
+        <option value="passageAvgQTime" ${activeY === 'passageAvgQTime' ? 'selected' : ''}>Avg Question Time on Passage (s/Q)</option>
+        <option value="passageTotalTime" ${activeY === 'passageTotalTime' ? 'selected' : ''}>Total Passage Duration (Reading + Questions)</option>
+        <option value="passageWordCount" ${activeY === 'passageWordCount' ? 'selected' : ''}>Passage Word Count</option>
+        <option value="passageGuesses" ${activeY === 'passageGuesses' ? 'selected' : ''}>Guesses &amp; 50/50s on Passage</option>
+        <option value="passageFatigueDelta" ${activeY === 'passageFatigueDelta' ? 'selected' : ''}>Fatigue Delta vs Passage 1 (Slowing Index)</option>
+      `;
+    } else if (activeMode === "sessions") {
+      yOptionsHtml = `
+        <option value="avgPassageReadSec" ${activeY === 'avgPassageReadSec' ? 'selected' : ''}>Avg Passage Reading Time (3:00 - 4:00 Benchmark)</option>
+        <option value="avgPassageWpm" ${activeY === 'avgPassageWpm' ? 'selected' : ''}>Avg Passage Reading Pace (200 - 260 WPM Target)</option>
+        <option value="scaledScore" ${activeY === 'scaledScore' ? 'selected' : ''}>MCAT Scaled Score (118 - 132)</option>
+        <option value="pct" ${activeY === 'pct' ? 'selected' : ''}>Raw Accuracy (%)</option>
+        <option value="avgQSec" ${activeY === 'avgQSec' ? 'selected' : ''}>Avg Pure Question Solving Time (s/Q)</option>
+        <option value="solidRatio" ${activeY === 'solidRatio' ? 'selected' : ''}>Solid Mastery Ratio (%)</option>
+        <option value="guessCount" ${activeY === 'guessCount' ? 'selected' : ''}>Total Guesses &amp; Coin Flips</option>
+        <option value="netSecondGuessing" ${activeY === 'netSecondGuessing' ? 'selected' : ''}>Second-Guessing Net Impact (Points)</option>
+        <option value="timeUsedMinutes" ${activeY === 'timeUsedMinutes' ? 'selected' : ''}>Total Section Elapsed Time (Minutes)</option>
+      `;
+    } else {
+      // questions_single
+      yOptionsHtml = `
+        <option value="qTime" ${activeY === 'qTime' ? 'selected' : ''}>Question Solving Time (Seconds/Q)</option>
+        <option value="qOutcomeScore" ${activeY === 'qOutcomeScore' ? 'selected' : ''}>Confidence &amp; Mastery Tier (Solid, 50/50, Guess, Miss)</option>
+      `;
+    }
+
+    topBar.innerHTML = `
+      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+        <label for="selDirectYMetric" style="font-size:11.5px;font-weight:700;color:#185A9D;background:#EDF4FB;border:1px solid #B8D5E5;padding:3px 8px;border-radius:4px;cursor:pointer" title="Select metric directly for vertical Y-axis">
+          Y-Axis
+        </label>
+        <select id="selDirectYMetric" style="font-size:12.5px;font-weight:600;color:#0F172A;padding:4px 10px;border:1.5px solid #185A9D;border-radius:4px;background:#FFFFFF;cursor:pointer;box-shadow:0 1px 3px rgba(0,0,0,0.06)">
+          ${yOptionsHtml}
+        </select>
+        <span style="font-size:11.5px;color:#64748B;font-style:italic">
+          ${dataset.metricDef.desc || ''}
+        </span>
+      </div>
+
+      <div style="display:flex;align-items:center;gap:8px">
+        <label style="font-size:12px;font-weight:600;color:#475569;display:flex;align-items:center;gap:4px">
+          Subject:
+          <select id="selDirectSubject" style="font-size:12px;padding:3px 8px;border:1px solid #CBD5E1;border-radius:3px;background:#FFF;cursor:pointer">
+            <option value="all" ${chartState.subjectFilter === 'all' ? 'selected' : ''}>All 4 Subjects</option>
+            <option value="C/P" ${chartState.subjectFilter === 'C/P' ? 'selected' : ''}>C/P Only</option>
+            <option value="CARS" ${chartState.subjectFilter === 'CARS' ? 'selected' : ''}>CARS Only</option>
+            <option value="B/B" ${chartState.subjectFilter === 'B/B' ? 'selected' : ''}>B/B Only</option>
+            <option value="P/S" ${chartState.subjectFilter === 'P/S' ? 'selected' : ''}>P/S Only</option>
+          </select>
+        </label>
+      </div>
+    `;
+    graphStage.appendChild(topBar);
+
+    // Canvas Container
     const canvasWrap = document.createElement("div");
-    canvasWrap.style.cssText = "position:relative;width:100%;height:320px";
+    canvasWrap.style.cssText = "position:relative;width:100%;height:330px";
     const canvas = document.createElement("canvas");
     canvas.style.cssText = "width:100%;height:100%;display:block;cursor:crosshair";
     canvasWrap.appendChild(canvas);
-    wrap.appendChild(canvasWrap);
+    graphStage.appendChild(canvasWrap);
 
-    // Initial render
-    setTimeout(() => {
+    // Bottom Bar: Direct X-Axis Selector & Section Picker (aligned right under horizontal X-axis)
+    const bottomBar = document.createElement("div");
+    bottomBar.style.cssText = "display:flex;justify-content:center;align-items:center;gap:12px;margin-top:8px;padding-top:10px;border-top:1.5px dashed #E2E8F0;flex-wrap:wrap";
+    bottomBar.innerHTML = `
+      <div style="display:flex;align-items:center;gap:8px">
+        <label for="selDirectXAxis" style="font-size:11.5px;font-weight:700;color:#185A9D;background:#EDF4FB;border:1px solid #B8D5E5;padding:3px 8px;border-radius:4px;cursor:pointer" title="Select dimension directly for horizontal X-axis">
+          X-Axis
+        </label>
+        <select id="selDirectXAxis" style="font-size:12.5px;font-weight:600;color:#0F172A;padding:4px 10px;border:1.5px solid #185A9D;border-radius:4px;background:#FFFFFF;cursor:pointer;box-shadow:0 1px 3px rgba(0,0,0,0.06)">
+          <option value="passages_all" ${activeMode === 'passages_all' ? 'selected' : ''}>Individual Passages (All Sections Chronologically)</option>
+          <option value="passages_single" ${activeMode === 'passages_single' ? 'selected' : ''}>Individual Passages (1 Specific Section)</option>
+          <option value="sessions" ${activeMode === 'sessions' ? 'selected' : ''}>Sessions (Trajectory Across Attempts)</option>
+          <option value="questions_single" ${activeMode === 'questions_single' ? 'selected' : ''}>Individual Questions (1 Specific Section)</option>
+        </select>
+      </div>
+
+      <!-- Section Picker for 1 specific section -->
+      <div id="wrapDirectSectionPicker" style="display:${(activeMode === 'passages_single' || activeMode === 'questions_single') ? 'flex' : 'none'};align-items:center;gap:6px">
+        <span style="font-size:12px;font-weight:600;color:#475569">Section:</span>
+        <select id="selDirectSection" style="font-size:12px;padding:4px 8px;border:1px solid #CBD5E1;border-radius:3px;background:#FFF;cursor:pointer;max-width:280px">
+          ${allSessions.slice().reverse().map(s => `
+            <option value="${s.id}" ${s.id === chartState.selectedSessionId ? 'selected' : ''}>
+              ${new Date(s.ts || Date.now()).toLocaleDateString([], {month:'short', day:'numeric'})} &bull; ${s.sec} - ${s.suiteTitle || s.label} (${s.scaledScore || 125}/132)
+            </option>
+          `).join("")}
+        </select>
+      </div>
+    `;
+    graphStage.appendChild(bottomBar);
+    wrap.appendChild(graphStage);
+
+    // Initial canvas render
+    const runTimer = (typeof setTimeout !== "undefined") ? setTimeout : ((fn) => fn());
+    runTimer(() => {
       drawCanvasChart(canvas, dataset, chartState.hoverIndex);
     }, 0);
+
+    // Canvas click listener to open/focus axis selector directly from graph margins
+    canvas.onclick = (e) => {
+      const rect = canvas.getBoundingClientRect();
+      const xMouse = e.clientX - rect.left;
+      const yMouse = e.clientY - rect.top;
+      const padL = 68;
+      const padT = 32;
+      const padB = 62;
+      const plotH = rect.height - padT - padB;
+
+      if (xMouse < padL + 15) {
+        const selYEl = wrap.querySelector("#selDirectYMetric");
+        if (selYEl) {
+          selYEl.focus();
+          if (typeof selYEl.showPicker === "function") {
+            try { selYEl.showPicker(); } catch (err) {}
+          }
+        }
+      } else if (yMouse > padT + plotH - 10) {
+        const selXEl = wrap.querySelector("#selDirectXAxis");
+        if (selXEl) {
+          selXEl.focus();
+          if (typeof selXEl.showPicker === "function") {
+            try { selXEl.showPicker(); } catch (err) {}
+          }
+        }
+      }
+    };
 
     // Mouse move hover listener for interactive tooltips
     canvas.onmousemove = (e) => {
@@ -1188,7 +1326,7 @@ Generate a concise, high-impact MCAT Trend Assessment (under 250 words total) st
       drawCanvasChart(canvas, dataset, -1);
     };
 
-    // 5. AI Trajectory Analysis Panel
+    // 4. AI Trajectory Analysis Panel
     const aiPanel = document.createElement("div");
     aiPanel.id = "peChartAIPanel";
     aiPanel.style.cssText = `margin-top:20px;border-top:1.5px solid #E2E8F0;padding-top:16px;${chartState.aiPanelOpen ? "" : "display:none"}`;
@@ -1215,74 +1353,61 @@ Generate a concise, high-impact MCAT Trend Assessment (under 250 words total) st
     `;
     wrap.appendChild(aiPanel);
 
-    // Event Listeners for Scope & Filters
-    const btnScopeAcross = wrap.querySelector("#btnScopeAcross");
-    const btnScopeWithin = wrap.querySelector("#btnScopeWithin");
-    if (btnScopeAcross) {
-      btnScopeAcross.onclick = () => {
-        chartState.scope = "across";
-        renderPerformanceCharts(container);
-      };
-    }
-    if (btnScopeWithin) {
-      btnScopeWithin.onclick = () => {
-        chartState.scope = "within";
+    // Event Listeners for On-Graph Selectors
+    const selY = wrap.querySelector("#selDirectYMetric");
+    if (selY) {
+      selY.onchange = (e) => {
+        chartState.yMetric = e.target.value;
+        if (activeMode === "sessions") chartState.acrossY = e.target.value;
+        else if (activeMode === "questions_single") chartState.withinY = e.target.value;
+        else chartState.withinY = e.target.value;
         renderPerformanceCharts(container);
       };
     }
 
-    const selAcrossY = wrap.querySelector("#selAcrossYMetric");
-    if (selAcrossY) {
-      selAcrossY.onchange = (e) => {
-        chartState.acrossY = e.target.value;
+    const selX = wrap.querySelector("#selDirectXAxis");
+    if (selX) {
+      selX.onchange = (e) => {
+        const newMode = e.target.value;
+        chartState.xAxisMode = newMode;
+        chartState.scope = newMode; // synchronize
+
+        // Smart metric transition
+        if (newMode === "sessions") {
+          chartState.acrossY = (chartState.yMetric === "passageWpm" ? "avgPassageWpm" : (chartState.yMetric === "passageReadSec" ? "avgPassageReadSec" : (chartState.yMetric === "passageAccuracy" ? "pct" : (chartState.acrossY || "avgPassageReadSec"))));
+          chartState.yMetric = chartState.acrossY;
+        } else if (newMode === "questions_single") {
+          chartState.withinX = "question";
+          chartState.withinY = "qTime";
+          chartState.yMetric = "qTime";
+        } else {
+          // passages_all or passages_single
+          chartState.withinX = "passage";
+          if (chartState.yMetric === "avgPassageWpm") chartState.yMetric = "passageWpm";
+          else if (chartState.yMetric === "avgPassageReadSec") chartState.yMetric = "passageReadSec";
+          else if (chartState.yMetric === "pct") chartState.yMetric = "passageAccuracy";
+          else if (!METRIC_DEFS[chartState.yMetric] || METRIC_DEFS[chartState.yMetric].scope === "across") {
+            chartState.yMetric = "passageWpm";
+          }
+          chartState.withinY = chartState.yMetric;
+        }
+
         renderPerformanceCharts(container);
       };
     }
 
-    const selAcrossX = wrap.querySelector("#selAcrossXAxis");
-    if (selAcrossX) {
-      selAcrossX.onchange = (e) => {
-        chartState.acrossX = e.target.value;
-        renderPerformanceCharts(container);
-      };
-    }
-
-    const selSub = wrap.querySelector("#selChartSubject");
-    if (selSub) {
-      selSub.onchange = (e) => {
-        chartState.subjectFilter = e.target.value;
-        renderPerformanceCharts(container);
-      };
-    }
-
-    const selDur = wrap.querySelector("#selChartDuration");
-    if (selDur) {
-      selDur.onchange = (e) => {
-        chartState.durationFilter = e.target.value;
-        renderPerformanceCharts(container);
-      };
-    }
-
-    const selWithinSession = wrap.querySelector("#selWithinSession");
-    if (selWithinSession) {
-      selWithinSession.onchange = (e) => {
+    const selSection = wrap.querySelector("#selDirectSection");
+    if (selSection) {
+      selSection.onchange = (e) => {
         chartState.selectedSessionId = e.target.value;
         renderPerformanceCharts(container);
       };
     }
 
-    const selWithinX = wrap.querySelector("#selWithinXAxis");
-    if (selWithinX) {
-      selWithinX.onchange = (e) => {
-        chartState.withinX = e.target.value;
-        renderPerformanceCharts(container);
-      };
-    }
-
-    const selWithinY = wrap.querySelector("#selWithinYMetric");
-    if (selWithinY) {
-      selWithinY.onchange = (e) => {
-        chartState.withinY = e.target.value;
+    const selSubject = wrap.querySelector("#selDirectSubject");
+    if (selSubject) {
+      selSubject.onchange = (e) => {
+        chartState.subjectFilter = e.target.value;
         renderPerformanceCharts(container);
       };
     }

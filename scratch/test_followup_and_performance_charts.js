@@ -68,6 +68,8 @@ function createMockEl(tag) {
 
 const sandbox = {
   console,
+  setTimeout: (fn) => fn(),
+  clearTimeout: () => {},
   localStorage: mockLocalStorage,
   window: { addEventListener: () => {} },
   document: {
@@ -339,6 +341,44 @@ assert(exportedCsv, "CSV export must generate content");
 assert(exportedCsv.includes("Passage 1"), "CSV must contain Passage 1");
 assert(exportedCsv.includes("169"), "CSV must contain 169 seconds");
 console.log("  [PASSED] Export to CSV verified.");
+
+// -------------------------------------------------------------
+// TEST 5B: Individual Passage Data Across ALL Sections Chronologically & Direct On-Graph Axis Controls
+// -------------------------------------------------------------
+console.log("\n--- TEST 5B: Individual Passages Across ALL Sections & Direct On-Graph Axis Selection ---");
+
+// Set X-axis mode to passages_all
+sandbox.chartState.scope = "passages_all";
+sandbox.chartState.xAxisMode = "passages_all";
+sandbox.chartState.yMetric = "passageWpm";
+sandbox.chartState.subjectFilter = "all";
+
+const datasetAllPassages = sandbox.getActiveChartDataset();
+assert.strictEqual(datasetAllPassages.scope, "passages_all", "Scope must be passages_all");
+assert.strictEqual(datasetAllPassages.points.length, 6, "Expected 6 individual passages across the 2 mock sessions (3 + 3)");
+assert.strictEqual(datasetAllPassages.points[0].val, 208, "S1 Passage 1 WPM must be 208");
+assert.strictEqual(datasetAllPassages.points[1].val, 149, "S1 Passage 2 WPM must be 149");
+assert.strictEqual(datasetAllPassages.points[2].val, 142, "S1 Passage 3 WPM must be 142");
+assert.strictEqual(datasetAllPassages.points[3].val, 226, "S2 Passage 1 WPM must be 226");
+assert.strictEqual(datasetAllPassages.points[4].val, 193, "S2 Passage 2 WPM must be 193");
+assert.strictEqual(datasetAllPassages.points[5].val, 174, "S2 Passage 3 WPM must be 174");
+assert(datasetAllPassages.points[0].shortLabel.includes("S1"), "Short label should indicate Session 1");
+assert(datasetAllPassages.points[3].shortLabel.includes("S2"), "Short label should indicate Session 2");
+console.log("  [PASSED] Individual passages plotted chronologically across all sections (6 total passages).");
+
+// Test on-graph container rendering
+const mountContainer = createMockEl("div");
+sandbox.renderPerformanceCharts(mountContainer);
+assert(mountContainer.children.length > 0, "Dashboard wrap must be appended to mount container");
+const dashboardWrap = mountContainer.children[0];
+const graphStage = dashboardWrap.children[2];
+const topBar = graphStage.children[0];
+const bottomBar = graphStage.children[2];
+
+assert(topBar.innerHTML.includes('id="selDirectYMetric"'), "Y-Axis selector must be directly on graph");
+assert(bottomBar.innerHTML.includes('id="selDirectXAxis"'), "X-Axis selector must be directly on graph");
+assert(bottomBar.innerHTML.includes("Individual Passages (All Sections Chronologically)"), "X-Axis must offer All Sections individual passages");
+console.log("  [PASSED] On-graph direct axis selectors verified.");
 
 // -------------------------------------------------------------
 // TEST 6: Zero Emojis Verification
