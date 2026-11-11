@@ -25,8 +25,9 @@ button{font:inherit;color:inherit;cursor:pointer;border:none;background:none}
 #top .bd{font-weight:700;font-size:12.5px;letter-spacing:.06em;opacity:.92}
 #top .sc{font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 #top .r{display:flex;align-items:center;gap:15px;white-space:nowrap}
-#clk{font-size:14px;font-weight:700;font-variant-numeric:tabular-nums;display:flex;gap:6px;align-items:center}
-#clk.low{color:#FFC9C2}
+#clk{font-size:14px;font-weight:700;font-variant-numeric:tabular-nums;display:flex;gap:6px;align-items:center;padding:3px 9px;border-radius:4px;border:1px solid transparent;transition:color 0.3s ease, background 0.3s ease, border-color 0.3s ease}
+#clk.low{animation:peClkLowPulse 1.4s ease-in-out infinite}
+@keyframes peClkLowPulse{0%,100%{opacity:1}50%{opacity:.65}}
 
 /* ===== HOME (exam selection) ===== */
 #home{flex:1 1 0%;min-height:0;overflow-y:auto;background:var(--shell)}
@@ -598,7 +599,12 @@ body.strike .opt:hover{background:#FBEAE8}
 /* 72 drillable topics mapped to MileDown review-sheet pages.
    mode "full" = no coursework / logged lapses → real question sets
    mode "spot" = coursework on transcript → verify, don't teach       */
-const EXAM_DATE = "2026-09-12";
+const DEFAULT_EXAM_DATE = "2027-01-15"; // Exactly 65 days from 2026-11-11
+function getExamDate(){
+  try{ return localStorage.getItem("drillroom_exam_date") || DEFAULT_EXAM_DATE; }
+  catch(e){ return DEFAULT_EXAM_DATE; }
+}
+const EXAM_DATE = getExamDate();
 const SPRINT_DAYS = 4;   // overloaded front-load: 72 topics in 4 days
 
 const SUBJECTS = [
@@ -2538,7 +2544,10 @@ let P=load(); let E=null; let strike=false, hl=false, timerId=null;
 
 function load(){ try{ return JSON.parse(localStorage.getItem(KEY))||{}; }catch(e){ return {}; } }
 function save(){ try{ localStorage.setItem(KEY,JSON.stringify(P)); }catch(e){} }
-function daysLeft(){ return Math.max(Math.ceil((new Date(EXAM_DATE+"T08:00:00")-new Date())/86400000),0); }
+function daysLeft(){
+  const dStr = getExamDate();
+  return Math.max(Math.ceil((new Date(dStr+"T08:00:00")-new Date())/86400000),0);
+}
 function view(v){ ["home","exam","res"].forEach(x=>$(x).classList.toggle("hide",x!==v)); }
 function flash(m){ $("flash").textContent=m; setTimeout(()=>{$("flash").textContent="";},9000); }
 function post(name,body){
@@ -2564,7 +2573,28 @@ function paintHome(){
   $("sQs").textContent=qs;
   $("sAcc").textContent=qs?Math.round(right/qs*100)+"%":"—";
   $("sSolid").textContent=qs?Math.round(solid/qs*100)+"%":"—";
-  $("sDays").textContent=daysLeft();
+  const sDaysEl = $("sDays");
+  if(sDaysEl){
+    sDaysEl.textContent = daysLeft();
+    sDaysEl.style.cursor = "pointer";
+    sDaysEl.title = "Click to set MCAT exam date or remaining days";
+    sDaysEl.onclick = () => {
+      const cur = getExamDate();
+      const left = daysLeft();
+      const ans = prompt(`Set MCAT Exam Date:\nEnter target date (YYYY-MM-DD) or number of days remaining (currently ${left} days / ${cur}):`, cur);
+      if(ans && ans.trim()){
+        const val = ans.trim();
+        let targetDateStr = val;
+        if(/^\d+$/.test(val)){
+          const targetMs = Date.now() + parseInt(val, 10) * 86400000;
+          targetDateStr = new Date(targetMs).toISOString().slice(0, 10);
+        }
+        try{ localStorage.setItem("drillroom_exam_date", targetDateStr); }catch(e){}
+        sDaysEl.textContent = daysLeft();
+        flash(`Exam date set to ${targetDateStr} (${daysLeft()} days remaining).`);
+      }
+    };
+  }
 
   const bank=$("tabBank"); bank.innerHTML="";
   SECTIONS.forEach(sec=>{
@@ -2675,8 +2705,135 @@ function setPaused(on){
   $("paused").classList.toggle("hide",!on);
   $("tPause").classList.toggle("on",on);
 }
-function paintClk(){ const m=Math.floor(E.left/60),s=E.left%60;
-  $("clkT").textContent=`${m}:${String(s).padStart(2,"0")}`; $("clk").classList.toggle("low",E.left<300); }
+function updateClockPacingStyle(clkEl){
+  if(!clkEl||!E||!E.s||!Array.isArray(E.s.qs)||E.s.qs.length===0){
+    if(clkEl){
+      clkEl.style.color="";
+      clkEl.style.background="";
+      clkEl.style.borderColor="";
+      clkEl.removeAttribute("title");
+    }
+    return;
+  }
+  const qs=E.s.qs, N=qs.length;
+  let totalSec=E._totalSec;
+  if(!totalSec){
+    if(E.s.secPerQ) totalSec=Math.round(E.s.secPerQ*N);
+    else if(E._peRef&&E._peRef.exam&&E._peRef.exam.duration) totalSec=E._peRef.exam.duration*60;
+    else if(E._origLeft) totalSec=E._origLeft;
+    else totalSec=(E.left||5400);
+    E._totalSec=totalSec;
+  }
+  const secPerQ=(E.s.secPerQ&&E.s.secPerQ>0)?E.s.secPerQ:(totalSec/N);
+
+  let answeredCount=0, activeTotal=0;
+  for(let j=0;j<N;j++){
+    const q=qs[j];
+    const isSk=q&&(q._isSkipped||(E.ans&&E.ans[j]===-1));
+    if(!isSk){
+      activeTotal++;
+      if(E.ans&&E.ans[j]!==null&&E.ans[j]!==undefined&&E.ans[j]!==-1){
+        answeredCount++;
+      }
+    }
+  }
+  if(activeTotal===0) activeTotal=N;
+
+  const remainingToAnswer=Math.max(0,activeTotal-answeredCount);
+  const timeRemaining=Math.max(0,E.left);
+  const currIdx=(typeof E.i==="number"&&E.i>=0&&E.i<N)?E.i:0;
+  const currIsAnswered=(E.ans&&E.ans[currIdx]!==null&&E.ans[currIdx]!==undefined&&E.ans[currIdx]!==-1);
+
+  let deltaSec=0;
+  if(currIsAnswered||remainingToAnswer===0){
+    const timeNeeded=remainingToAnswer*secPerQ;
+    deltaSec=timeRemaining-timeNeeded;
+  } else {
+    const targetStart=remainingToAnswer*secPerQ;
+    const targetEnd=(remainingToAnswer-1)*secPerQ;
+    if(timeRemaining>targetStart){
+      deltaSec=timeRemaining-targetStart;
+    } else if(timeRemaining<targetEnd){
+      deltaSec=timeRemaining-targetEnd;
+    } else {
+      deltaSec=0;
+    }
+  }
+
+  // Deadband threshold of 15 seconds
+  if(Math.abs(deltaSec)<=15){
+    clkEl.style.color="#FFFFFF";
+    clkEl.style.background="rgba(255, 255, 255, 0.12)";
+    clkEl.style.borderColor="rgba(255, 255, 255, 0.22)";
+    clkEl.title="Pacing: On schedule";
+    return;
+  }
+
+  if(deltaSec>15){
+    // Ahead of pace -> Green gradient smoothly interpolating to emerald #4ADE80
+    const t=Math.min(1,(deltaSec-15)/285);
+    const r=Math.round(255-t*(255-74));
+    const g=Math.round(255-t*(255-222));
+    const b=Math.round(255-t*(255-128));
+    const bgA=(0.12+0.20*t).toFixed(2);
+    const bdA=(0.25+0.40*t).toFixed(2);
+
+    clkEl.style.color=`rgb(${r}, ${g}, ${b})`;
+    clkEl.style.background=`rgba(34, 197, 94, ${bgA})`;
+    clkEl.style.borderColor=`rgba(74, 222, 128, ${bdA})`;
+
+    const aheadSec=Math.round(deltaSec);
+    const mAhead=Math.floor(aheadSec/60);
+    const sAhead=aheadSec%60;
+    clkEl.title=mAhead>0?`Pacing: ${mAhead}m ${sAhead}s ahead of schedule`:`Pacing: ${sAhead}s ahead of schedule`;
+  } else {
+    // Behind pace -> Red gradient interpolating White -> Amber -> Coral -> Crimson
+    const behindSec=Math.round(Math.abs(deltaSec));
+    const t=Math.min(1,(behindSec-15)/285);
+
+    let r,g,b;
+    if(t<0.35){
+      const p=t/0.35;
+      r=Math.round(255-p*(255-251));
+      g=Math.round(255-p*(255-146));
+      b=Math.round(255-p*(255-60));
+    } else if(t<0.70){
+      const p=(t-0.35)/0.35;
+      r=Math.round(251-p*(251-248));
+      g=Math.round(146-p*(146-113));
+      b=Math.round(60+p*(113-60));
+    } else {
+      const p=(t-0.70)/0.30;
+      r=Math.round(248-p*(248-239));
+      g=Math.round(113-p*(113-68));
+      b=Math.round(113-p*(113-68));
+    }
+
+    const bgA=(0.12+0.22*t).toFixed(2);
+    const bdA=(0.28+0.45*t).toFixed(2);
+
+    clkEl.style.color=`rgb(${r}, ${g}, ${b})`;
+    clkEl.style.background=`rgba(239, 68, 68, ${bgA})`;
+    clkEl.style.borderColor=`rgba(248, 113, 113, ${bdA})`;
+
+    const mBehind=Math.floor(behindSec/60);
+    const sBehind=behindSec%60;
+    clkEl.title=mBehind>0?`Pacing: ${mBehind}m ${sBehind}s behind schedule`:`Pacing: ${sBehind}s behind schedule`;
+  }
+}
+
+function paintClk(){
+  if(!E) return;
+  const m=Math.floor(E.left/60),s=E.left%60;
+  const clkEl=$("clk");
+  const clkTEl=$("clkT");
+  if(clkTEl) clkTEl.textContent=`${m}:${String(s).padStart(2,"0")}`;
+  if(!clkEl) return;
+  clkEl.classList.toggle("low",E.left<300);
+  updateClockPacingStyle(clkEl);
+}
+window.paintClk=paintClk;
+window.updateClockPacingStyle=updateClockPacingStyle;
 function drawQ(){
   if(E.seen) E.seen[E.i]=true;
   const s=E.s,q=s.qs[E.i];
@@ -2704,6 +2861,7 @@ function drawQ(){
   $("bPrev").disabled=E.i===0;
   $("bNext").disabled=!(E.ans[E.i]!==null&&E.conf[E.i]!==null);
   $("bNext").textContent=E.i===s.qs.length-1?"End Section":"Next";
+  paintClk();
 }
 $("bPrev").onclick=()=>{ if(E.i>0){E.i--;drawQ();} };
 $("bNext").onclick=()=>{ if(E.i===E.s.qs.length-1) grade(); else {E.i++;drawQ();} };

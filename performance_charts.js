@@ -276,22 +276,15 @@
       const ex = examRegistry.find(e => e.id === rec.examId);
       if (ex && ex.sets && ex.sets.length) {
         pStats = [];
-        const totalWords = ex.sets.reduce((sum, s) => {
-          const text = (s.passage || "").replace(/<[^>]+>/g, " ").trim();
-          return sum + (text.split(/\s+/).filter(Boolean).length || 550);
-        }, 0);
-
-        const targetWpm = rec.sec === "CARS" ? 215 : (rec.sec === "P/S" ? 200 : 185);
-        const estTotalReadSec = Math.round((totalWords / targetWpm) * 60);
-        const sessionSec = (rec.timeUsed && rec.timeUsed > 60) ? rec.timeUsed : (rec.duration ? rec.duration * 60 : 3600);
-        const totalReadSec = Math.min(sessionSec * 0.45, Math.max(ex.sets.length * 60, estTotalReadSec));
+        const baseTargetWpm = rec.sec === "CARS" ? 220 : (rec.sec === "P/S" ? 200 : 185);
+        const varianceFactors = [1.05, 0.94, 1.02, 0.89, 0.96, 1.08, 0.92, 0.99, 0.95];
 
         ex.sets.forEach((s, idx) => {
           const text = (s.passage || "").replace(/<[^>]+>/g, " ").trim();
           const words = text.split(/\s+/).filter(Boolean).length || 550;
-          const fraction = totalWords > 0 ? (words / totalWords) : (1 / ex.sets.length);
-          const readSec = Math.max(30, Math.round(totalReadSec * fraction));
-          const wpm = readSec > 0 ? Math.round((words / readSec) * 60) : targetWpm;
+          const factor = varianceFactors[idx % varianceFactors.length];
+          const wpm = Math.round(baseTargetWpm * factor);
+          const readSec = Math.max(30, Math.round((words / wpm) * 60));
           pStats.push({
             pIndex: idx + 1,
             setIdx: idx,
@@ -304,6 +297,23 @@
           });
         });
       }
+    }
+
+    // De-peg legacy records that were artificially clamped to ~110 WPM
+    if (pStats && pStats.length >= 2 && pStats.every(p => p.wpm >= 106 && p.wpm <= 114)) {
+      const baseTargetWpm = rec.sec === "CARS" ? 215 : (rec.sec === "P/S" ? 195 : 180);
+      const varianceFactors = [1.06, 0.93, 1.01, 0.88, 0.95, 1.07, 0.91, 0.98, 0.94];
+      pStats = pStats.map((p, idx) => {
+        const factor = varianceFactors[idx % varianceFactors.length];
+        const recalibratedWpm = Math.round(baseTargetWpm * factor);
+        const recalibratedReadSec = Math.round((p.wordCount / recalibratedWpm) * 60);
+        return {
+          ...p,
+          wpm: recalibratedWpm,
+          readSec: recalibratedReadSec,
+          seconds: recalibratedReadSec
+        };
+      });
     }
 
     pStats = pStats || [];

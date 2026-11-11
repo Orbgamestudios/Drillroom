@@ -2069,6 +2069,7 @@ function drawPEQ() {
   $("bPrev").disabled = E.i === 0;
   $("bNext").disabled = !isQSkipped && !(E.ans[E.i] !== null && E.conf[E.i] !== null);
   $("bNext").textContent = E.i === E.s.qs.length - 1 ? "End Section" : "Next";
+  if (typeof paintClk === "function") paintClk();
 }
 
 /* =========================================================================
@@ -2113,10 +2114,10 @@ function calculatePassageReadingTelemetry(pe, questions) {
     const totalSetSec = qIndices.reduce((sum, qi) => sum + (rawQTimes[qi] || 0), 0);
 
     // Target MCAT analytical reading speeds (WPM)
-    const targetWpm = secKey === "CARS" ? 225 : (secKey === "P/S" ? 205 : 185);
+    const targetWpm = secKey === "CARS" ? 220 : (secKey === "P/S" ? 200 : 185);
     const expectedReadSec = Math.round((wordCount / targetWpm) * 60);
     const minPlausibleSec = Math.max(25, Math.round((wordCount / 450) * 60)); // ~450 WPM upper bound
-    const maxPlausibleSec = Math.min(360, Math.round((wordCount / 110) * 60)); // ~110 WPM lower bound
+    const maxPlausibleSec = Math.min(300, Math.round((wordCount / 115) * 60));
 
     // 1. Determine baseline question solving speed for this passage
     const firstQIdx = qIndices[0];
@@ -2130,20 +2131,20 @@ function calculatePassageReadingTelemetry(pe, questions) {
     } else if (subQTimes.length === 1) {
       baselineSolveSec = subQTimes[0];
     } else {
-      baselineSolveSec = secKey === "CARS" ? 60 : 50;
+      baselineSolveSec = secKey === "CARS" ? 55 : 48;
     }
 
     // 2. Identify pre-answer dwell (time spent across all questions before any answer was committed)
-    const preAnswerDwell = tData.totalPreAnswerDwell !== undefined 
-      ? tData.totalPreAnswerDwell 
-      : (rawQTimes[firstQIdx] || 0);
+    const initialQDwell = (tData.qDwellBeforeFirstAnswer && tData.qDwellBeforeFirstAnswer[firstQIdx]) 
+      ? tData.qDwellBeforeFirstAnswer[firstQIdx] 
+      : (tData.totalPreAnswerDwell !== undefined ? tData.totalPreAnswerDwell : (rawQTimes[firstQIdx] || 0));
 
     let rawReadEstimate;
 
     // Case A: Clear pre-answer dwell identified
-    if (preAnswerDwell >= 35) {
-      const qFirstSolveOverhead = Math.min(baselineSolveSec, Math.round(preAnswerDwell * 0.35));
-      rawReadEstimate = preAnswerDwell - qFirstSolveOverhead;
+    if (initialQDwell >= 35) {
+      const qFirstSolveOverhead = Math.min(baselineSolveSec, Math.round(initialQDwell * 0.25));
+      rawReadEstimate = initialQDwell - qFirstSolveOverhead;
     } else {
       // Case B: Rapid first answer or delayed reading
       let maxDwellQ = firstQIdx;
@@ -2165,7 +2166,11 @@ function calculatePassageReadingTelemetry(pe, questions) {
 
     // 3. Bayesian prior calibration & physiological clamping
     let finalReadSec;
-    if (preAnswerDwell >= 45) {
+    if (initialQDwell >= 45) {
+      // If reading estimate exceeds 4 minutes, gently blend with expected read time to prevent artificial flatlining
+      if (rawReadEstimate > 240) {
+        rawReadEstimate = Math.round((rawReadEstimate * 0.65) + (expectedReadSec * 0.35));
+      }
       finalReadSec = Math.max(minPlausibleSec, Math.min(maxPlausibleSec, Math.round(rawReadEstimate)));
     } else {
       const blended = (rawReadEstimate * 0.70) + (expectedReadSec * 0.30);

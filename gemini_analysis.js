@@ -10,13 +10,12 @@
   const MODEL_KEY = "drillroom_gemini_model";
   const CACHE_PREFIX = "drillroom_ai_analysis_";
 
-  const DEFAULT_MODEL = "gemini-2.5-flash";
+  const DEFAULT_MODEL = "gemini-1.5-flash";
   const SUPPORTED_MODELS = [
-    { id: "gemini-2.5-flash", name: "Gemini 2.5 Flash (Recommended — Ultra Fast & Smart)" },
-    { id: "gemini-2.0-flash", name: "Gemini 2.0 Flash (Fast & Balanced)" },
-    { id: "gemini-1.5-flash", name: "Gemini 1.5 Flash (Standard Fast)" },
-    { id: "gemini-1.5-pro",   name: "Gemini 1.5 Pro (Deep Cognitive Reasoning)" },
-    { id: "gemini-3.8-flash", name: "Gemini 3.8 Flash (Preview)" }
+    { id: "gemini-1.5-flash",    name: "Gemini 1.5 Flash (Recommended — Universally Available & Fast)" },
+    { id: "gemini-2.0-flash",    name: "Gemini 2.0 Flash (Fast & Modern)" },
+    { id: "gemini-1.5-flash-8b", name: "Gemini 1.5 Flash-8B (Ultra Lightweight)" },
+    { id: "gemini-1.5-pro",      name: "Gemini 1.5 Pro (Deep Cognitive Reasoning — Requires Pro access)" }
   ];
 
   /* Fetch all available models accessible with this API key */
@@ -60,7 +59,7 @@
   function getModel() {
     try {
       const m = localStorage.getItem(MODEL_KEY);
-      if (m && m !== "gemini-3.8-flash" && m !== "gemini-3.8-pro" && m !== "gemini-3.8") {
+      if (m && m !== "gemini-3.8-flash" && m !== "gemini-3.8-pro" && m !== "gemini-3.8" && m !== "gemini-2.5-flash") {
         return m;
       }
       return DEFAULT_MODEL;
@@ -97,18 +96,23 @@
   async function callGeminiAPI(prompt, apiKey, requestedModel) {
     if (!apiKey) throw new Error("Missing Gemini API Key. Please enter your key first.");
 
-    const cleanModel = (requestedModel || getModel()).replace(/^models\//, "").trim();
-    const modelsToTry = [
+    let cleanModel = (requestedModel || getModel()).replace(/^models\//, "").trim();
+    if (cleanModel === "gemini-2.5-flash" || cleanModel.startsWith("gemini-3.8")) {
+      cleanModel = DEFAULT_MODEL;
+    }
+
+    let modelsToTry = [
       cleanModel,
-      "gemini-2.5-flash",
-      "gemini-2.0-flash",
       "gemini-1.5-flash",
+      "gemini-2.0-flash",
+      "gemini-1.5-flash-8b",
       "gemini-1.5-pro"
     ].filter((v, i, a) => v && a.indexOf(v) === i);
 
     let lastError = null;
 
-    for (const model of modelsToTry) {
+    for (let i = 0; i < modelsToTry.length; i++) {
+      const model = modelsToTry[i];
       try {
         const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(apiKey)}`;
         const contents = Array.isArray(prompt)
@@ -135,9 +139,22 @@
 
         if (!res.ok) {
           const errMsg = data.error?.message || `HTTP ${res.status}`;
-          // If model was not found, try the next model fallback
-          if (data.error?.status === "NOT_FOUND" || errMsg.toLowerCase().includes("not found")) {
+          // If model was not found or unsupported for generateContent on this key, dynamically auto-discover valid models
+          if (data.error?.status === "NOT_FOUND" || errMsg.toLowerCase().includes("not found") || errMsg.toLowerCase().includes("not supported")) {
             lastError = new Error(`Model ${model} not available: ${errMsg}`);
+            // On first failure, query Google ModelService.ListModels for all supported models on this key
+            if (i === 0) {
+              try {
+                const detected = await fetchAvailableModels(apiKey);
+                if (detected && detected.length > 0) {
+                  detected.forEach(d => {
+                    if (!modelsToTry.includes(d.id)) {
+                      modelsToTry.push(d.id);
+                    }
+                  });
+                }
+              } catch (e) {}
+            }
             continue;
           }
           // Auth or quota errors should abort immediately
@@ -150,9 +167,11 @@
           throw new Error("Gemini returned an empty response candidate.");
         }
 
-        // Cache working model to bypass fallbacks in future calls
+        // Cache working model so future calls use this verified working model
         try {
           localStorage.setItem(MODEL_KEY, model);
+          const badge = document.getElementById("gModelBadge");
+          if (badge) badge.textContent = model;
         } catch(e) {}
 
         return { text, modelUsed: model };
