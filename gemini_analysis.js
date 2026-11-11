@@ -9,7 +9,7 @@
   const STORAGE_KEY = "drillroom_gemini_api_key";
   const MODEL_KEY = "drillroom_gemini_model";
   const CACHE_PREFIX = "drillroom_ai_analysis_";
-  const PROMPT_VERSION = 2;
+  const PROMPT_VERSION = 3;
 
   const DEFAULT_MODEL = "gemini-1.5-flash";
   const SUPPORTED_MODELS = [
@@ -357,6 +357,9 @@
           out.push("</div>");
           inExecSummary = false;
         }
+        if (stripped.startsWith("# 1.") || stripped.startsWith("# 1 ") || stripped.includes("Visual Graph Diagnostics") || stripped.includes("Trajectory Comparison") || stripped.includes("Baseline Calibration")) {
+          out.push('<div id="peEmbeddedGraphsMount"></div>');
+        }
         out.push(`<h2 style="font-size:18px;font-weight:700;margin:22px 0 10px;color:var(--nav);border-bottom:2px solid var(--line);padding-bottom:6px;display:flex;align-items:center;gap:8px">${inlineFormat(stripped.slice(2))}</h2>`);
         continue;
       } else if (stripped.startsWith("## ")) {
@@ -433,6 +436,464 @@
           mount.scrollIntoView({ behavior: "smooth", block: "start" });
         }
       }
+    }
+  }
+
+  /* ===== 3 CORE EMBEDDED DIAGNOSTIC CHARTS ===== */
+  function buildScoreDataset(info, hist) {
+    const points = [];
+    if (hist && hist.recentTrend && hist.recentTrend.length > 0) {
+      hist.recentTrend.forEach(s => {
+        points.push({
+          label: s.date || `S${s.index}`,
+          sub: s.title || "",
+          val: s.scaledScore || 125,
+          displayVal: `${s.scaledScore || 125} / 132`,
+          isCurrent: false
+        });
+      });
+    }
+    points.push({
+      label: "Current",
+      sub: info.title || "This Section",
+      val: info.scaledScore,
+      displayVal: `${info.scaledScore} / 132`,
+      isCurrent: true
+    });
+
+    const scores = points.map(p => p.val);
+    const min = Math.min(...scores);
+    const max = Math.max(...scores);
+    const yFloor = Math.max(118, Math.min(124, min - 2));
+    const yCeil = Math.min(132, Math.max(130, max + 2));
+
+    return {
+      type: "scoreTrajectory",
+      title: "1. Score Trajectory (118-132)",
+      badge: `${info.scaledScore} / 132 (Target: 128+)`,
+      points,
+      yFloor,
+      yCeil,
+      benchmark: { line: 128, label: "128 Target" }
+    };
+  }
+
+  function buildFatigueDeltaDataset(info) {
+    let pList = Array.isArray(info.passageStats) ? info.passageStats : (info.passageStats ? Object.values(info.passageStats) : []);
+    const scored = pList.filter(p => !p.isSkipped);
+    if (!scored.length) return null;
+
+    const p1Sec = scored[0].readSec || scored[0].seconds || scored[0].elapsedSec || 180;
+    const points = scored.map((p, idx) => {
+      const sec = p.readSec || p.seconds || p.elapsedSec || p1Sec;
+      const delta = Math.round(sec - p1Sec);
+      return {
+        label: `P${idx + 1}`,
+        sub: `${Math.floor(sec / 60)}m ${String(sec % 60).padStart(2, "0")}s`,
+        val: delta,
+        displayVal: (delta > 0 ? `+${delta}` : `${delta}`) + "s vs P1",
+        sec
+      };
+    });
+
+    const deltas = points.map(p => p.val);
+    const avgDrift = Math.round(deltas.reduce((a, b) => a + b, 0) / deltas.length);
+    let absMax = Math.max(20, ...deltas.map(d => Math.abs(d)));
+    let M = Math.ceil((absMax * 1.18) / 15) * 15;
+
+    return {
+      type: "fatigueDelta",
+      title: "2. Cognitive Fatigue Delta",
+      badge: `${avgDrift >= 0 ? "+" : ""}${avgDrift}s vs P1 (Target: 0s)`,
+      isDelta: true,
+      points,
+      yFloor: -M,
+      yCeil: +M,
+      ticks: [-M, -M / 2, 0, M / 2, M],
+      benchmark: { line: 0, label: "0s Baseline" }
+    };
+  }
+
+  function buildWpmDataset(info) {
+    let pList = Array.isArray(info.passageStats) ? info.passageStats : (info.passageStats ? Object.values(info.passageStats) : []);
+    const scored = pList.filter(p => !p.isSkipped);
+    if (!scored.length) return null;
+
+    const points = scored.map((p, idx) => {
+      const s = p.readSec || p.seconds || p.elapsedSec || 180;
+      const words = p.wordCount || 550;
+      const wpm = p.wpm || (s > 0 ? Math.round((words / s) * 60) : 200);
+      return {
+        label: `P${idx + 1}`,
+        sub: `${words} words`,
+        val: wpm,
+        displayVal: `${wpm} WPM`,
+        words,
+        s
+      };
+    });
+
+    const wpms = points.map(p => p.val);
+    const avgWpm = Math.round(wpms.reduce((a, b) => a + b, 0) / wpms.length);
+    const min = Math.min(...wpms, 200);
+    const max = Math.max(...wpms, 260);
+    const yFloor = Math.max(100, Math.floor((min - 20) / 20) * 20);
+    const yCeil = Math.min(360, Math.ceil((max + 20) / 20) * 20);
+
+    return {
+      type: "passageWpm",
+      title: "3. Passage Reading Speed",
+      badge: `${avgWpm} WPM (Target: 200-260)`,
+      points,
+      yFloor,
+      yCeil,
+      benchmark: { min: 200, max: 260, label: "Target (200-260)" }
+    };
+  }
+
+  function drawEmbeddedChart(canvas, dataset, hoveredIdx) {
+    if (!canvas || !dataset || !dataset.points || !dataset.points.length) return;
+    const ctx = canvas.getContext ? canvas.getContext("2d") : null;
+    if (!ctx) return;
+
+    const dpr = (typeof window !== "undefined" && window.devicePixelRatio) ? window.devicePixelRatio : 1;
+    const rect = canvas.getBoundingClientRect ? canvas.getBoundingClientRect() : { width: 320, height: 210 };
+    const width = rect.width || 320;
+    const height = rect.height || 210;
+
+    canvas.width = Math.round(width * dpr);
+    canvas.height = Math.round(height * dpr);
+    ctx.scale(dpr, dpr);
+
+    ctx.clearRect(0, 0, width, height);
+
+    const padL = 46;
+    const padR = 24;
+    const padT = 24;
+    const padB = 34;
+
+    const plotW = width - padL - padR;
+    const plotH = height - padT - padB;
+
+    const yFloor = dataset.yFloor;
+    const yCeil = dataset.yCeil;
+    const span = (yCeil - yFloor) || 1;
+
+    const getY = (v) => padT + plotH - ((v - yFloor) / span) * plotH;
+    const getX = (idx) => {
+      if (dataset.points.length === 1) return padL + plotW / 2;
+      return padL + (idx / (dataset.points.length - 1)) * plotW;
+    };
+
+    // 1. Gridlines & Ticks
+    const ticks = dataset.ticks || [
+      yFloor,
+      yFloor + span * 0.25,
+      yFloor + span * 0.5,
+      yFloor + span * 0.75,
+      yCeil
+    ];
+
+    ctx.font = "600 10px Arial, sans-serif";
+    ctx.textAlign = "right";
+
+    ticks.forEach(t => {
+      const yPx = getY(t);
+      const isZero = (dataset.isDelta && Math.abs(t) < 0.01);
+      ctx.strokeStyle = isZero ? "rgba(16, 185, 129, 0.45)" : "#F1F5F9";
+      ctx.lineWidth = isZero ? 1.5 : 1;
+      ctx.beginPath();
+      ctx.moveTo(padL, yPx);
+      ctx.lineTo(padL + plotW, yPx);
+      ctx.stroke();
+
+      ctx.fillStyle = isZero ? "#10B981" : "#94A3B8";
+      const label = dataset.isDelta ? (t > 0 ? `+${Math.round(t)}s` : `${Math.round(t)}s`) : `${Math.round(t)}`;
+      ctx.fillText(label, padL - 6, yPx + 3.5);
+    });
+
+    // 2. Benchmark Band / Line
+    if (dataset.benchmark) {
+      if (dataset.benchmark.min !== undefined && dataset.benchmark.max !== undefined) {
+        const bTop = getY(dataset.benchmark.max);
+        const bBottom = getY(dataset.benchmark.min);
+        ctx.fillStyle = "rgba(16, 185, 129, 0.08)";
+        ctx.fillRect(padL, bTop, plotW, bBottom - bTop);
+        ctx.strokeStyle = "rgba(16, 185, 129, 0.35)";
+        ctx.lineWidth = 1;
+        ctx.strokeRect(padL, bTop, plotW, bBottom - bTop);
+
+        ctx.fillStyle = "#10B981";
+        ctx.font = "700 9.5px Arial, sans-serif";
+        ctx.textAlign = "right";
+        ctx.fillText(dataset.benchmark.label, padL + plotW - 4, bTop + 10);
+      } else if (dataset.benchmark.line !== undefined) {
+        const bY = getY(dataset.benchmark.line);
+        ctx.strokeStyle = "#10B981";
+        ctx.lineWidth = 1.5;
+        if (ctx.setLineDash) ctx.setLineDash([4, 3]);
+        ctx.beginPath();
+        ctx.moveTo(padL, bY);
+        ctx.lineTo(padL + plotW, bY);
+        ctx.stroke();
+        if (ctx.setLineDash) ctx.setLineDash([]);
+
+        ctx.fillStyle = "#10B981";
+        ctx.font = "700 9.5px Arial, sans-serif";
+        ctx.textAlign = "right";
+        ctx.fillText(dataset.benchmark.label, padL + plotW - 4, bY - 4);
+      }
+    }
+
+    // 3. Data Series
+    if (dataset.type === "fatigueDelta") {
+      const zeroY = getY(0);
+      dataset.points.forEach((p, idx) => {
+        const xPx = getX(idx);
+        const yPx = getY(p.val);
+        const color = p.val <= 0 ? "#10B981" : (p.val <= 20 ? "#F59E0B" : "#EF4444");
+
+        // Stem from zeroY to yPx
+        ctx.strokeStyle = color;
+        ctx.lineWidth = 3.5;
+        ctx.beginPath();
+        ctx.moveTo(xPx, zeroY);
+        ctx.lineTo(xPx, yPx);
+        ctx.stroke();
+
+        // Dot
+        ctx.fillStyle = color;
+        ctx.beginPath();
+        ctx.arc(xPx, yPx, (hoveredIdx === idx) ? 6 : 4.5, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Value text
+        ctx.fillStyle = color;
+        ctx.font = "700 10.5px Arial, sans-serif";
+        ctx.textAlign = "center";
+        const valText = p.val > 0 ? `+${p.val}s` : `${p.val}s`;
+        ctx.fillText(valText, xPx, yPx + (p.val >= 0 ? -8 : 14));
+
+        // X Label
+        ctx.fillStyle = (hoveredIdx === idx) ? "#0F172A" : "#64748B";
+        ctx.font = (hoveredIdx === idx) ? "700 10.5px Arial, sans-serif" : "600 10px Arial, sans-serif";
+        ctx.fillText(p.label, xPx, padT + plotH + 16);
+      });
+    } else {
+      const color = dataset.type === "scoreTrajectory" ? "#185A9D" : "#0D9488";
+      const fillColor = dataset.type === "scoreTrajectory" ? "rgba(24, 90, 157, 0.08)" : "rgba(13, 148, 136, 0.08)";
+
+      // Area fill
+      if (dataset.points.length > 1) {
+        ctx.fillStyle = fillColor;
+        ctx.beginPath();
+        dataset.points.forEach((p, idx) => {
+          const xPx = getX(idx);
+          const yPx = getY(p.val);
+          if (idx === 0) ctx.moveTo(xPx, padT + plotH);
+          ctx.lineTo(xPx, yPx);
+          if (idx === dataset.points.length - 1) {
+            ctx.lineTo(xPx, padT + plotH);
+          }
+        });
+        ctx.closePath();
+        ctx.fill();
+      }
+
+      // Line
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 2.5;
+      ctx.beginPath();
+      dataset.points.forEach((p, idx) => {
+        const xPx = getX(idx);
+        const yPx = getY(p.val);
+        if (idx === 0) ctx.moveTo(xPx, yPx);
+        else ctx.lineTo(xPx, yPx);
+      });
+      ctx.stroke();
+
+      // Dots
+      dataset.points.forEach((p, idx) => {
+        const xPx = getX(idx);
+        const yPx = getY(p.val);
+        ctx.fillStyle = p.isCurrent ? "#2563EB" : color;
+        ctx.beginPath();
+        ctx.arc(xPx, yPx, (hoveredIdx === idx) ? 6 : (p.isCurrent ? 5.5 : 4.5), 0, Math.PI * 2);
+        ctx.fill();
+
+        ctx.strokeStyle = "#FFFFFF";
+        ctx.lineWidth = 1.5;
+        ctx.stroke();
+
+        // Value text
+        ctx.fillStyle = color;
+        ctx.font = "700 10.5px Arial, sans-serif";
+        ctx.textAlign = "center";
+        const valText = dataset.type === "scoreTrajectory" ? `${p.val}` : `${p.val}w`;
+        ctx.fillText(valText, xPx, yPx - 8);
+
+        // X Label
+        ctx.fillStyle = (hoveredIdx === idx) ? "#0F172A" : "#64748B";
+        ctx.font = (hoveredIdx === idx) ? "700 10.5px Arial, sans-serif" : "600 10px Arial, sans-serif";
+        ctx.fillText(p.label, xPx, padT + plotH + 16);
+      });
+    }
+
+    // 4. Hover Tooltip
+    if (hoveredIdx >= 0 && hoveredIdx < dataset.points.length) {
+      const p = dataset.points[hoveredIdx];
+      const xPx = getX(hoveredIdx);
+      const yPx = getY(p.val);
+
+      const tipText = `${p.label}: ${p.displayVal}`;
+      const subText = p.sub ? `(${p.sub})` : "";
+      ctx.font = "700 11px Arial, sans-serif";
+      const w1 = ctx.measureText ? ctx.measureText(tipText).width : 80;
+      ctx.font = "10px Arial, sans-serif";
+      const w2 = subText && ctx.measureText ? ctx.measureText(subText).width : 0;
+      const boxW = Math.max(w1, w2) + 16;
+      const boxH = subText ? 34 : 22;
+
+      let boxX = xPx - boxW / 2;
+      boxX = Math.max(padL, Math.min(padL + plotW - boxW, boxX));
+      let boxY = yPx - boxH - 10;
+      if (boxY < padT) boxY = yPx + 14;
+
+      ctx.fillStyle = "rgba(15, 23, 42, 0.92)";
+      ctx.fillRect(boxX, boxY, boxW, boxH);
+
+      ctx.fillStyle = "#FFFFFF";
+      ctx.font = "700 10.5px Arial, sans-serif";
+      ctx.textAlign = "center";
+      ctx.fillText(tipText, boxX + boxW / 2, boxY + (subText ? 13 : 15));
+
+      if (subText) {
+        ctx.fillStyle = "#CBD5E1";
+        ctx.font = "9.5px Arial, sans-serif";
+        ctx.fillText(subText, boxX + boxW / 2, boxY + 26);
+      }
+    }
+  }
+
+  function setupCanvasInteractivity(canvasId, dataset) {
+    if (typeof document === "undefined") return;
+    const canvas = document.getElementById(canvasId);
+    if (!canvas) return;
+
+    drawEmbeddedChart(canvas, dataset, -1);
+
+    canvas.onmousemove = (e) => {
+      const rect = canvas.getBoundingClientRect();
+      const x = e.clientX - rect.left;
+      const padL = 46, padR = 24;
+      const plotW = rect.width - padL - padR;
+      const pts = dataset.points;
+      if (!pts || !pts.length) return;
+
+      let closestIdx = -1;
+      let minDiff = 36;
+      pts.forEach((p, idx) => {
+        const ptX = pts.length === 1 ? padL + plotW / 2 : padL + (idx / (pts.length - 1)) * plotW;
+        const diff = Math.abs(ptX - x);
+        if (diff < minDiff) {
+          minDiff = diff;
+          closestIdx = idx;
+        }
+      });
+      drawEmbeddedChart(canvas, dataset, closestIdx);
+    };
+
+    canvas.onmouseleave = () => {
+      drawEmbeddedChart(canvas, dataset, -1);
+    };
+  }
+
+  function renderEmbeddedExamCharts(mountEl, info) {
+    if (!mountEl || !info) return;
+
+    const hist = (typeof extractHistoricalTrajectory === "function") 
+      ? extractHistoricalTrajectory(info) 
+      : info.historicalTrajectory;
+
+    const scoreDataset = buildScoreDataset(info, hist);
+    const deltaDataset = buildFatigueDeltaDataset(info);
+    const wpmDataset = buildWpmDataset(info);
+
+    mountEl.innerHTML = `
+      <div class="pe-embedded-charts-card" style="margin:20px 0 24px 0;background:#FFFFFF;border:1.5px solid #CBD5E1;border-radius:8px;box-shadow:0 2px 8px rgba(0,0,0,0.06);overflow:hidden">
+        <div style="background:linear-gradient(135deg, #1E293B 0%, #334155 100%);color:#fff;padding:12px 18px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
+          <div>
+            <div style="font-weight:700;font-size:14.5px;letter-spacing:.02em">
+              Performance Telemetry &bull; 3 Core Diagnostic Graphs
+            </div>
+            <div style="font-size:11.5px;opacity:.88">
+              Visual breakdown of score trajectory, cognitive fatigue drift, and passage pace &bull; Analyzed by AI below
+            </div>
+          </div>
+          <span style="font-size:11px;font-weight:700;background:rgba(255,255,255,0.18);padding:3px 8px;border-radius:3px">
+            3 ESSENTIAL GRAPHS
+          </span>
+        </div>
+
+        <div style="padding:16px;display:grid;grid-template-columns:repeat(auto-fit, minmax(280px, 1fr));gap:16px;background:#F8FAFC">
+          <!-- Chart 1: Score Trajectory -->
+          <div style="background:#FFFFFF;border:1px solid #E2E8F0;border-radius:6px;padding:12px 14px;box-shadow:0 1px 3px rgba(0,0,0,0.03);display:flex;flex-direction:column">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;flex-wrap:wrap;gap:4px">
+              <div style="font-weight:700;font-size:13px;color:#0F3D69">
+                ${scoreDataset.title}
+              </div>
+              <div style="font-size:11px;font-weight:600;color:#185A9D;background:#EDF4FB;padding:2px 7px;border-radius:3px">
+                ${scoreDataset.badge}
+              </div>
+            </div>
+            <div style="position:relative;width:100%;height:210px;flex:1">
+              <canvas id="peEmbCanvas_score" style="width:100%;height:100%;display:block;cursor:crosshair"></canvas>
+            </div>
+          </div>
+
+          <!-- Chart 2: Cognitive Fatigue Delta -->
+          <div style="background:#FFFFFF;border:1px solid #E2E8F0;border-radius:6px;padding:12px 14px;box-shadow:0 1px 3px rgba(0,0,0,0.03);display:flex;flex-direction:column">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;flex-wrap:wrap;gap:4px">
+              <div style="font-weight:700;font-size:13px;color:#0F3D69">
+                ${deltaDataset ? deltaDataset.title : "2. Cognitive Fatigue Delta"}
+              </div>
+              <div style="font-size:11px;font-weight:600;color:#185A9D;background:#EDF4FB;padding:2px 7px;border-radius:3px">
+                ${deltaDataset ? deltaDataset.badge : "Single Passage / Discrete"}
+              </div>
+            </div>
+            <div style="position:relative;width:100%;height:210px;flex:1">
+              <canvas id="peEmbCanvas_delta" style="width:100%;height:100%;display:block;cursor:crosshair"></canvas>
+            </div>
+          </div>
+
+          <!-- Chart 3: Passage Reading Speed -->
+          <div style="background:#FFFFFF;border:1px solid #E2E8F0;border-radius:6px;padding:12px 14px;box-shadow:0 1px 3px rgba(0,0,0,0.03);display:flex;flex-direction:column">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;flex-wrap:wrap;gap:4px">
+              <div style="font-weight:700;font-size:13px;color:#0F3D69">
+                ${wpmDataset ? wpmDataset.title : "3. Passage Reading Speed"}
+              </div>
+              <div style="font-size:11px;font-weight:600;color:#185A9D;background:#EDF4FB;padding:2px 7px;border-radius:3px">
+                ${wpmDataset ? wpmDataset.badge : "AAMC Target: 200–260 WPM"}
+              </div>
+            </div>
+            <div style="position:relative;width:100%;height:210px;flex:1">
+              <canvas id="peEmbCanvas_wpm" style="width:100%;height:100%;display:block;cursor:crosshair"></canvas>
+            </div>
+          </div>
+        </div>
+      </div>
+    `;
+
+    if (typeof setTimeout === "function") {
+      setTimeout(() => {
+        setupCanvasInteractivity("peEmbCanvas_score", scoreDataset);
+        if (deltaDataset) setupCanvasInteractivity("peEmbCanvas_delta", deltaDataset);
+        if (wpmDataset) setupCanvasInteractivity("peEmbCanvas_wpm", wpmDataset);
+      }, 50);
+    } else {
+      setupCanvasInteractivity("peEmbCanvas_score", scoreDataset);
+      if (deltaDataset) setupCanvasInteractivity("peEmbCanvas_delta", deltaDataset);
+      if (wpmDataset) setupCanvasInteractivity("peEmbCanvas_wpm", wpmDataset);
     }
   }
 
@@ -760,54 +1221,83 @@
       ? (info.answerChangeAudit.wrongToRight - info.answerChangeAudit.rightToWrong)
       : 0;
 
+    const scoredPassages = pList.filter(p => !p.isSkipped);
+    const p1Duration = scoredPassages.length > 0 ? (scoredPassages[0].readSec || scoredPassages[0].seconds || scoredPassages[0].elapsedSec || 180) : 180;
+    const passageDriftLines = scoredPassages.map((p, idx) => {
+      const s = p.readSec || p.seconds || p.elapsedSec || p1Duration;
+      const drift = Math.round(s - p1Duration);
+      return `- Passage ${idx + 1}: ${Math.floor(s / 60)}m ${String(s % 60).padStart(2, "0")}s (${s}s) &bull; Drift vs P1: **${drift >= 0 ? "+" : ""}${drift}s** ${drift > 20 ? "(Fatigue Drift Slowdown)" : drift < -10 ? "(Accelerated Pace)" : "(Steady)"}`;
+    }).join("\n");
+
+    const passageWpmLines = scoredPassages.map((p, idx) => {
+      const s = p.readSec || p.seconds || p.elapsedSec || 180;
+      const w = p.wordCount || 550;
+      const wpm = p.wpm || (s > 0 ? Math.round((w / s) * 60) : 200);
+      const zone = (wpm >= 200 && wpm <= 260) ? "In Target Sweet Spot (200-260 WPM)" : (wpm < 200 ? "Below Target (<200 WPM, clock risk)" : "Above Target (>260 WPM, skim risk)");
+      return `- Passage ${idx + 1}: **${wpm} WPM** (${w} words in ${Math.floor(s / 60)}m ${String(s % 60).padStart(2, "0")}s) &bull; ${zone}`;
+    }).join("\n");
+
+    let scoreDeltaStr = "+0.0";
+    let wpmDeltaStr = "+0";
+    let readSecDeltaStr = "+0s";
+    let fatigueDeltaDiffStr = "+0s drift";
+    let qSecDeltaStr = "+0s";
+    let timeSinksDeltaStr = "+0";
+    let netGuessDeltaStr = "+0";
+
     let comparativeSection = "";
     const hist = extractHistoricalTrajectory(info);
 
     if (hist && hist.priorCount > 0) {
       const scoreDelta = (info.scaledScore - hist.baseline.scaledScore).toFixed(1);
-      const scoreDeltaStr = (parseFloat(scoreDelta) >= 0 ? "+" : "") + scoreDelta;
+      scoreDeltaStr = (parseFloat(scoreDelta) >= 0 ? "+" : "") + scoreDelta;
       const wpmDelta = Math.round(thisWpm - hist.baseline.avgPassageWpm);
-      const wpmDeltaStr = (wpmDelta >= 0 ? "+" : "") + wpmDelta;
+      wpmDeltaStr = (wpmDelta >= 0 ? "+" : "") + wpmDelta;
       const readSecDelta = Math.round(thisReadSec - hist.baseline.avgPassageReadSec);
-      const readSecDeltaStr = (readSecDelta >= 0 ? "+" : "") + readSecDelta + "s";
+      readSecDeltaStr = (readSecDelta >= 0 ? "+" : "") + readSecDelta + "s";
       const fatigueDeltaDiff = Math.round(thisFatigueDelta - hist.baseline.avgSessionFatigueDelta);
-      const fatigueDeltaDiffStr = (fatigueDeltaDiff <= 0 ? "" : "+") + fatigueDeltaDiff + "s drift";
+      fatigueDeltaDiffStr = (fatigueDeltaDiff <= 0 ? "" : "+") + fatigueDeltaDiff + "s drift";
       const qSecDelta = Math.round((info.avgQSec || 55) - hist.baseline.avgQSec);
-      const qSecDeltaStr = (qSecDelta <= 0 ? "" : "+") + qSecDelta + "s";
+      qSecDeltaStr = (qSecDelta <= 0 ? "" : "+") + qSecDelta + "s";
       const timeSinksDelta = (thisTimeSinks - hist.baseline.timeSinkCount).toFixed(1);
-      const timeSinksDeltaStr = (parseFloat(timeSinksDelta) <= 0 ? "" : "+") + timeSinksDelta;
+      timeSinksDeltaStr = (parseFloat(timeSinksDelta) <= 0 ? "" : "+") + timeSinksDelta;
       const netGuessDelta = (thisNetGuess - hist.baseline.netSecondGuessing).toFixed(1);
-      const netGuessDeltaStr = (parseFloat(netGuessDelta) >= 0 ? "+" : "") + netGuessDelta;
+      netGuessDeltaStr = (parseFloat(netGuessDelta) >= 0 ? "+" : "") + netGuessDelta;
 
       comparativeSection = `
-### MULTI-SESSION HISTORICAL TRAJECTORY & GRAPH COMPARISON:
-The student has completed ${hist.priorCount} previous practice session(s) in DrillRoom (${hist.isSameSubjectPool ? `${info.sec} subject pool` : 'across subjects'}). Contrast their current performance against their historical baseline and recent progression:
+### 3 CORE PERFORMANCE TELEMETRY GRAPHS (EMBEDDED DIRECTLY IN REPORT):
+The student is viewing 3 visual graphs embedded directly in their report card:
 
-| Performance Metric & Graph | Current Session | Prior Session (${hist.lastSession.date}) | Historical Baseline (${hist.priorCount} Attempts) | Trajectory Delta vs Baseline | AAMC Target Benchmark |
-| :--- | :---: | :---: | :---: | :---: | :---: |
-| **Scaled Score** ([Score Trajectory Graph]) | **${info.scaledScore}** / 132 | ${hist.lastSession.scaledScore} / 132 | ${hist.baseline.scaledScore} / 132 | **${scoreDeltaStr} pts** | 128+ Competitive Threshold |
-| **Passage Reading Speed** ([Reading Speed Graph]) | **${thisWpm} WPM** | ${hist.lastSession.avgPassageWpm} WPM | ${hist.baseline.avgPassageWpm} WPM | **${wpmDeltaStr} WPM** | 200–260 WPM Target Pace |
-| **Passage Reading Time** ([Reading Time Graph]) | **${Math.floor(thisReadSec / 60)}m ${String(thisReadSec % 60).padStart(2, "0")}s** | ${Math.floor(hist.lastSession.avgPassageReadSec / 60)}m ${String(hist.lastSession.avgPassageReadSec % 60).padStart(2, "0")}s | ${Math.floor(hist.baseline.avgPassageReadSec / 60)}m ${String(hist.baseline.avgPassageReadSec % 60).padStart(2, "0")}s | **${readSecDeltaStr}** | 3:00–4:00 Benchmark |
-| **Session Fatigue Drift vs P1** ([Session Fatigue Delta Graph]) | **${thisFatigueDelta >= 0 ? "+" : ""}${thisFatigueDelta}s vs P1** | ${hist.lastSession.avgSessionFatigueDelta >= 0 ? "+" : ""}${hist.lastSession.avgSessionFatigueDelta}s | ${hist.baseline.avgSessionFatigueDelta >= 0 ? "+" : ""}${hist.baseline.avgSessionFatigueDelta}s | **${fatigueDeltaDiffStr}** | 0s (Zero Cognitive Fatigue Drift) |
-| **Question Solving Pace** ([Question Pace Graph]) | **${info.avgQSec || 55}s / Q** | ${hist.lastSession.avgQSec}s / Q | ${hist.baseline.avgQSec}s / Q | **${qSecDeltaStr}** | 45–80s Optimal Pace |
-| **Sunk-Cost Questions (>100s)** ([Time Sinks Graph]) | **${thisTimeSinks} time sinks** | ${hist.lastSession.timeSinkCount} sinks | ${hist.baseline.timeSinkCount} sinks / session | **${timeSinksDeltaStr} sinks** | 0 Sunk Costs (Strict 90s Rule) |
-| **Second-Guessing Net Impact** ([Second-Guessing Net Impact Graph]) | **${thisNetGuess >= 0 ? "+" : ""}${thisNetGuess} pts** | ${hist.lastSession.netSecondGuessing >= 0 ? "+" : ""}${hist.lastSession.netSecondGuessing} pts | ${hist.baseline.netSecondGuessing >= 0 ? "+" : ""}${hist.baseline.netSecondGuessing} pts | **${netGuessDeltaStr} pts** | >= 0 (Break-even or Gain) |
+1. **Score Trajectory Graph (118–132 Scale):**
+   - Current Section Score: **${info.scaledScore} / 132** (Percentile: ${info.percentile})
+   - Medical School Competitive Target: **128+**
+   - Historical Baseline (${hist.priorCount} Prior Attempts): **${hist.baseline.scaledScore} / 132** (Trajectory Delta: **${scoreDeltaStr} pts** vs baseline)
+   - Progression: ${hist.recentTrend.map(s => `${s.date}: ${s.scaledScore}/132`).join(" -> ")} -> Today: ${info.scaledScore}/132
 
-**Recent Chronological Progression:**
-${hist.recentTrend.map(s => `- ${s.date} • ${s.title}: Scaled **${s.scaledScore}/132** | Reading: **${s.avgPassageWpm} WPM** | Fatigue Drift: **${s.avgSessionFatigueDelta >= 0 ? "+" : ""}${s.avgSessionFatigueDelta}s** | Pure Q Pace: **${s.avgQSec}s** | Time Sinks: **${s.timeSinkCount}**`).join("\n")}
+2. **Cognitive Fatigue Delta Graph (Reading Time Drift vs Passage 1):**
+   - Passage 1 Baseline Duration: **${Math.floor(p1Duration / 60)}m ${String(p1Duration % 60).padStart(2, "0")}s** (${p1Duration}s)
+   - Per-Passage Drift vs P1:
+${passageDriftLines}
+   - Average Section Fatigue Drift: **${thisFatigueDelta >= 0 ? "+" : ""}${thisFatigueDelta}s vs P1** (Target: 0s Zero Fatigue Drift)
+
+3. **Passage Reading Speed Graph (Words Per Minute):**
+   - AAMC Target Band: **200 – 260 WPM** (Analytical Comprehension Sweet Spot)
+   - Per-Passage Reading Speed:
+${passageWpmLines}
+   - Average Section Reading Pace: **${thisWpm} WPM** | Average Passage Reading Time: **${Math.floor(thisReadSec / 60)}m ${String(thisReadSec % 60).padStart(2, "0")}s**
 `;
     } else {
       comparativeSection = `
-### INITIAL BASELINE CALIBRATION (FIRST RECORDED SESSION):
-This is the student's first recorded practice attempt in DrillRoom. Establish their initial performance benchmark:
-- **Baseline Scaled Score:** ${info.scaledScore} / 132 (Target: 128+) &bull; establish baseline on [Score Trajectory Graph]
-- **Baseline Analytical Reading Speed:** ${thisWpm} WPM (Target: 200–260 WPM) &bull; establish baseline on [Reading Speed Graph] and [Reading Time Graph]
-- **Baseline Cognitive Fatigue Drift:** ${thisFatigueDelta >= 0 ? "+" : ""}${thisFatigueDelta}s vs Passage 1 (Target: 0s) &bull; establish baseline on [Session Fatigue Delta Graph]
-- **Baseline Question Solving Pace:** ~${info.avgQSec || 55}s / Q (Target: 45–80s) &bull; establish baseline on [Question Pace Graph]
-- **Baseline Time Sinks (>100s):** ${thisTimeSinks} &bull; establish baseline on [Time Sinks Graph]
-- **Baseline Second-Guessing Impact:** ${thisNetGuess >= 0 ? "+" : ""}${thisNetGuess} pts &bull; establish baseline on [Second-Guessing Net Impact Graph]
-
-MANDATORY BASELINE INSTRUCTION: Even though this is their first session, you MUST explicitly name and cite the bracketed graphs above ([Score Trajectory Graph], [Reading Speed Graph], [Session Fatigue Delta Graph], [Reading Time Graph], [Time Sinks Graph], [Second-Guessing Net Impact Graph]) in Section 1 and in the Executive Summary to guide the student on which specific graphs in DrillRoom's Performance Charts will track their trajectory across upcoming practice sessions.
+### 3 CORE PERFORMANCE TELEMETRY GRAPHS (EMBEDDED DIRECTLY IN REPORT):
+This is the student's initial baseline session in DrillRoom. The student is viewing 3 visual graphs embedded in their report:
+1. **Score Trajectory Graph:** Initial baseline score of **${info.scaledScore} / 132** (Target: 128+)
+2. **Cognitive Fatigue Delta Graph:**
+   - Passage 1 Baseline: ${Math.floor(p1Duration / 60)}m ${String(p1Duration % 60).padStart(2, "0")}s (${p1Duration}s)
+${passageDriftLines}
+   - Average Section Drift: **${thisFatigueDelta >= 0 ? "+" : ""}${thisFatigueDelta}s vs P1** (Target: 0s)
+3. **Passage Reading Speed Graph:**
+${passageWpmLines}
+   - Average Reading Pace: **${thisWpm} WPM** (AAMC Benchmark: 200–260 WPM)
 `;
     }
 
@@ -837,16 +1327,13 @@ ${reviewText}
 ### INSTRUCTIONS:
 Generate a thorough, high-impact, and empowering MCAT Diagnostic Report structured with the following exact Markdown headers:
 
-MANDATORY GRAPH CITATION REQUIREMENT:
-DrillRoom includes an interactive Performance Charts system with clickable graph inspection pills.
-In both the Executive Summary and Section 1, you MUST explicitly evaluate and cite at least 3 of these exact bracketed graph names:
-- [Score Trajectory Graph]
-- [Reading Speed Graph]
-- [Session Fatigue Delta Graph]
-- [Reading Time Graph]
-- [Time Sinks Graph]
-- [Second-Guessing Net Impact Graph]
-Do NOT omit these bracketed graph names under any circumstances! They allow the student to immediately click and inspect their charts.
+MANDATORY GRAPH ANALYSIS REQUIREMENT:
+The 3 key diagnostic graphs (Score Trajectory Graph, Session Fatigue Delta Graph, Reading Speed Graph) are embedded visually directly above Section 1 in the student's report card.
+You MUST provide a thorough, evidence-based diagnostic analyzing what is happening in each of those 3 graphs in Section 1:
+- ### Graph 1: Score Trajectory & MCAT Target Analysis
+- ### Graph 2: Cognitive Fatigue Delta & Stamina Breakdown
+- ### Graph 3: Passage Reading Speed (WPM) vs Comprehension Analysis
+In your analysis, directly cite and interpret the exact numbers shown in the 3 graphs above (e.g. citing their ${info.scaledScore}/132 score vs 128+, citing which passage experienced fatigue drift, and citing their reading pace vs the 200–260 WPM sweet spot).
 
 CRITICAL REQUIREMENT: The student wants an immediate, high-yield summary right at the top so they can know their top priorities in under 30 seconds without reading through the full diagnostic.
 You MUST begin your response with this exact Executive Summary block:
@@ -859,34 +1346,32 @@ You MUST begin your response with this exact Executive Summary block:
 > 
 > **Pacing Reality:** [1 clear sentence summarizing their true pacing — citing their net question solving speed of ~${info.avgQSec || 55}s/question and passage reading pace, noting that timing is sound and where to maintain discipline.]
 > 
-> **Trajectory vs Previous Sessions:** [1–2 sentences directly comparing this attempt to their historical baseline or establishing their starting benchmark. You MUST cite at least 2 key bracketed graphs (e.g. "Up +2.5 scaled points vs your 129.5 baseline on the [Score Trajectory Graph]; reading speed accelerated to ${thisWpm} WPM on the [Reading Speed Graph], and fatigue drift dropped to ${thisFatigueDelta >= 0 ? "+" : ""}${thisFatigueDelta}s on the [Session Fatigue Delta Graph], confirming cognitive stamina conditioning.")]
+> **Trajectory vs Previous Sessions:** [1–2 sentences summarizing what the 3 embedded graphs reveal: their score trajectory (${info.scaledScore}/132 vs 128+ target on the [Score Trajectory Graph]), stamina drift on the [Session Fatigue Delta Graph] (${thisFatigueDelta >= 0 ? "+" : ""}${thisFatigueDelta}s), and reading pace on the [Reading Speed Graph] (${thisWpm} WPM).]
 > 
 > **#1 Rule for Your Next Section:** [1 punchy, memorable test-taking rule to deploy immediately on their next passage or section.]
 
 ### Quick Priority Punch List
 - **What Dropped Points:** [1–2 crisp sentences diagnosing the root cause behind their misses/guesses.]
 - **What Succeeded:** [1 sentence validating genuine mastery, strong comprehension, and uninflated accuracy.]
-- **Trajectory Delta:** [1 sentence summarizing where they moved compared to prior attempts (or baseline calibration), explicitly naming the [Score Trajectory Graph], [Reading Speed Graph], or [Session Fatigue Delta Graph] that confirms it.]
+- **Trajectory Delta:** [1 sentence summarizing where they moved compared to prior attempts (or baseline calibration), explicitly referencing the 3 visual graphs (Score Trajectory, Fatigue Delta, Reading Speed).]
 - **Immediate Action Item:** [1 specific drill or rule to execute immediately.]
 
 ---
 
-# 1. Trajectory Comparison: Where You Stand vs Previous Sessions
-${(hist && hist.priorCount > 0)
-  ? `Synthesize where the student stands today compared to their earlier sessions using the multi-session comparison table and important graphs. You MUST explicitly name each bracketed graph in your analysis:
-- **Score Progression & Reliability ([Score Trajectory Graph]):** Contrast their current score (${info.scaledScore}/132) against their historical baseline (${hist.baseline.scaledScore}/132). Is their performance stabilizing, reaching a new peak, or fluctuating?
-- **Passage Reading Speed & Stamina ([Reading Speed Graph] & [Reading Time Graph]):** Compare reading speed (${thisWpm} WPM vs baseline ${hist.baseline.avgPassageWpm} WPM) and duration. Did faster reading sacrifice comprehension, or did it unlock extra question answering buffer?
-- **Cognitive Endurance & Fatigue Elimination ([Session Fatigue Delta Graph] & [Endurance Accuracy Delta Graph]):** Evaluate whether reading time drift on later passages (${thisFatigueDelta >= 0 ? "+" : ""}${thisFatigueDelta}s) is compressing toward the 0s baseline compared to earlier sessions (${hist.baseline.avgSessionFatigueDelta >= 0 ? "+" : ""}${hist.baseline.avgSessionFatigueDelta}s). Are they eliminating late-section stamina drop-offs?
-- **Pacing Discipline & Sunk-Cost Elimination ([Time Sinks Graph] & [Second-Guessing Net Impact Graph]):** Compare time-sink frequency (>100s questions) and answer-switching discipline against earlier sessions.
-- **Recommended Graphs to Inspect in Performance Charts:** Explicitly name the 2–3 specific graphs in DrillRoom's Performance Charts (e.g., [Session Fatigue Delta Graph], [Reading Speed Graph], [Score Trajectory Graph]) that provide the most critical diagnostic visual for their next training cycle.`
-  : `(Title this section: "# 1. Baseline Calibration & Performance Trajectory Setup")
-Since this is the student's initial baseline session in DrillRoom, establish their benchmark across all core performance graphs in DrillRoom's Performance Charts. You MUST explicitly cite each bracketed graph to tell the student what metrics to track:
-- **Initial Score Calibration ([Score Trajectory Graph]):** Calibrate their initial ${info.scaledScore}/132 scaled score. Explain what score trajectory trend to target across upcoming sections.
-- **Passage Reading Pace & Stamina ([Reading Speed Graph] & [Reading Time Graph]):** Benchmark their initial reading speed (${thisWpm} WPM) and average reading duration (${Math.floor(thisReadSec / 60)}m ${String(thisReadSec % 60).padStart(2, "0")}s).
-- **Cognitive Fatigue & Endurance Baseline ([Session Fatigue Delta Graph]):** Benchmark their initial late-passage drift (${thisFatigueDelta >= 0 ? "+" : ""}${thisFatigueDelta}s vs Passage 1). Explain why tracking fatigue delta across sessions will reveal cognitive endurance conditioning.
-- **Pacing Discipline & Answer Changes ([Time Sinks Graph] & [Second-Guessing Net Impact Graph]):** Evaluate initial time sinks (${thisTimeSinks}) and net answer-change score impact (${thisNetGuess >= 0 ? "+" : ""}${thisNetGuess} pts).
-- **Recommended Graphs to Inspect in Performance Charts:** Explicitly name the 2–3 specific graphs (e.g. [Score Trajectory Graph], [Reading Speed Graph], [Session Fatigue Delta Graph]) they should immediately monitor in Performance Charts.`
-}
+# 1. Visual Graph Diagnostics: What the 3 Key Graphs Reveal
+The student sees the 3 interactive graphs embedded directly above this section. You MUST provide an incisive, deep-dive diagnostic analyzing what is occurring in each of the 3 graphs:
+
+### Graph 1: Score Trajectory & MCAT Target Analysis
+- Analyze their scaled score of ${info.scaledScore}/132 relative to the 128+ competitive medical school threshold and their historical progression (${hist && hist.priorCount > 0 ? `${scoreDeltaStr} pts vs ${hist.baseline.scaledScore} baseline` : 'initial baseline calibration'}).
+- Discuss score stability, reliability, and how many points were dropped due to unforced errors vs genuine content gaps.
+
+### Graph 2: Cognitive Fatigue Delta & Endurance Breakdown
+- Analyze their passage-by-passage fatigue drift vs Passage 1 (${scoredPassages.length >= 2 ? `Passage 1 baseline: ${p1Duration}s; latest drift: ${thisFatigueDelta >= 0 ? "+" : ""}${thisFatigueDelta}s` : 'single passage baseline'}).
+- Identify the exact passage where cognitive fatigue began to set in (e.g., when drift climbed above +15-20s). Explain how cognitive exhaustion on later passages impaired passage retention, slowed down question solving, or induced second-guessing. Provide a concrete stamina conditioning strategy to maintain consistent pacing across all passages.
+
+### Graph 3: Passage Reading Speed (WPM) vs Comprehension Analysis
+- Analyze their passage reading speed across passages (${thisWpm} WPM average) against the AAMC 200–260 WPM sweet spot.
+- Pinpoint whether any passages were read too slowly (<190 WPM, burning clock) or rushed (>260 WPM, missing subtle nuances). Explain how their reading pace directly impacted their question-answering buffer.
 
 # 2. Executive Score Diagnostic & Metacognitive Calibration
 - Diagnose their scaled score (${info.scaledScore}/132) against competitive medical school thresholds (500 median, 510 competitive, 515+ top tier).
@@ -1421,10 +1906,10 @@ REMINDER ON MANDATORY GRAPH PILLS: Make sure you have cited the bracketed graph 
     const legacyBannerHtml = isLegacy ? `
       <div id="gLegacyUpgradeBanner" style="margin-bottom:14px;padding:12px 16px;background:#EDF4FB;border:1px solid #B8D5E5;border-radius:4px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px">
         <div style="font-size:12.5px;color:#185A9D;line-height:1.4">
-          <strong>Multi-Session Graph Trajectory Available:</strong> Upgrade this review to compare your performance against previous sessions using the Session Fatigue Delta Graph, Reading Speed Graph, and Score Trajectory Graph.
+          <strong>Visual Performance Telemetry Available:</strong> Upgrade this review to see 3 embedded visual graphs (Score Trajectory, Cognitive Fatigue Delta, and Passage Reading Speed) directly on screen with in-depth AI graph diagnostics.
         </div>
         <button class="btn pri" id="gUpgradeRunBtn" style="font-size:12px;padding:6px 14px;white-space:nowrap">
-          Regenerate with Graph Analytics
+          Regenerate with Visual Graphs
         </button>
       </div>
     ` : "";
@@ -1482,6 +1967,20 @@ REMINDER ON MANDATORY GRAPH PILLS: Make sure you have cited the bracketed graph 
         </form>
       </div>
     `;
+
+    // Render the 3 embedded core graphs directly into the report
+    let mount = container.querySelector("#peEmbeddedGraphsMount");
+    if (!mount) {
+      const contentEl = container.querySelector(".gemini-markdown-content");
+      if (contentEl) {
+        mount = document.createElement("div");
+        mount.id = "peEmbeddedGraphsMount";
+        contentEl.insertBefore(mount, contentEl.firstChild);
+      }
+    }
+    if (mount && typeof renderEmbeddedExamCharts === "function") {
+      renderEmbeddedExamCharts(mount, info);
+    }
 
     const chatStream = document.getElementById("gFollowupChatStream");
     const clearChatBtn = document.getElementById("gClearChatBtn");
@@ -1831,6 +2330,11 @@ REMINDER ON MANDATORY GRAPH PILLS: Make sure you have cited the bracketed graph 
   window.getGeminiModel = getModel;
   window.jumpToPerformanceChart = jumpToPerformanceChart;
   window.extractHistoricalTrajectory = extractHistoricalTrajectory;
+  window.renderEmbeddedExamCharts = renderEmbeddedExamCharts;
+  window.drawEmbeddedChart = drawEmbeddedChart;
+  window.buildScoreDataset = buildScoreDataset;
+  window.buildFatigueDeltaDataset = buildFatigueDeltaDataset;
+  window.buildWpmDataset = buildWpmDataset;
 
   if (typeof globalThis !== "undefined") {
     globalThis.renderGeminiExamCard = renderGeminiExamCard;
@@ -1844,6 +2348,11 @@ REMINDER ON MANDATORY GRAPH PILLS: Make sure you have cited the bracketed graph 
     globalThis.getGeminiModel = getModel;
     globalThis.jumpToPerformanceChart = jumpToPerformanceChart;
     globalThis.extractHistoricalTrajectory = extractHistoricalTrajectory;
+    globalThis.renderEmbeddedExamCharts = renderEmbeddedExamCharts;
+    globalThis.drawEmbeddedChart = drawEmbeddedChart;
+    globalThis.buildScoreDataset = buildScoreDataset;
+    globalThis.buildFatigueDeltaDataset = buildFatigueDeltaDataset;
+    globalThis.buildWpmDataset = buildWpmDataset;
   }
 
   // Auto-init hooks after DOM is ready

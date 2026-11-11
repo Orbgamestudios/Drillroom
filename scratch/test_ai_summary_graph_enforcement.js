@@ -140,11 +140,11 @@ const mockExamInfoMulti = {
 };
 
 const promptMulti = sb1.buildDiagnosticPrompt(mockExamInfoMulti);
-assert(promptMulti.includes("MANDATORY GRAPH CITATION REQUIREMENT"), "Prompt must include MANDATORY GRAPH CITATION REQUIREMENT");
+assert(promptMulti.includes("MANDATORY GRAPH ANALYSIS REQUIREMENT"), "Prompt must include MANDATORY GRAPH ANALYSIS REQUIREMENT");
 assert(promptMulti.includes("[Score Trajectory Graph]"), "Prompt must cite [Score Trajectory Graph]");
 assert(promptMulti.includes("[Reading Speed Graph]"), "Prompt must cite [Reading Speed Graph]");
 assert(promptMulti.includes("[Session Fatigue Delta Graph]"), "Prompt must cite [Session Fatigue Delta Graph]");
-assert(promptMulti.includes("# 1. Trajectory Comparison: Where You Stand vs Previous Sessions"), "Prompt must include Trajectory Comparison header");
+assert(promptMulti.includes("# 1. Visual Graph Diagnostics: What the 3 Key Graphs Reveal"), "Prompt must include Visual Graph Diagnostics header");
 assert(promptMulti.includes("REMINDER ON MANDATORY GRAPH PILLS"), "Prompt must include end-of-prompt reminder");
 console.log("✓ Test 2 Passed: Multi-session prompt enforces bracketed graph names in all required sections!");
 
@@ -190,8 +190,8 @@ const mockExamInfoFirst = {
 };
 
 const promptFirst = sbEmpty.buildDiagnosticPrompt(mockExamInfoFirst);
-assert(promptFirst.includes("INITIAL BASELINE CALIBRATION (FIRST RECORDED SESSION)"), "Prompt must include initial baseline section");
-assert(promptFirst.includes("MANDATORY BASELINE INSTRUCTION"), "Prompt must include mandatory baseline graph instruction");
+assert(promptFirst.includes("3 CORE PERFORMANCE TELEMETRY GRAPHS (EMBEDDED DIRECTLY IN REPORT):"), "Prompt must include 3 core graphs section");
+assert(promptFirst.includes("MANDATORY GRAPH ANALYSIS REQUIREMENT"), "Prompt must include mandatory graph analysis requirement");
 assert(promptFirst.includes("[Score Trajectory Graph]"), "Baseline prompt must include [Score Trajectory Graph]");
 assert(promptFirst.includes("[Reading Speed Graph]"), "Baseline prompt must include [Reading Speed Graph]");
 assert(promptFirst.includes("[Session Fatigue Delta Graph]"), "Baseline prompt must include [Session Fatigue Delta Graph]");
@@ -206,7 +206,7 @@ const markdownSample = `
 > **Trajectory:** Up +2.5 points on your **[Score Trajectory Graph]**. Your [Reading Speed] accelerated to 218 WPM on the [Passage Reading Speed Graph].
 > Fatigue drift compressed toward zero on the [Session Fatigue Delta Graph].
 
-# 1. Trajectory Comparison
+# 1. Visual Graph Diagnostics: What the 3 Key Graphs Reveal
 - Score Progression: View the Score Trajectory Graph.
 - Cognitive stamina: Tracked via [Session Fatigue Delta].
 - Sunk Costs: Controlled on [Time Sinks Graph].
@@ -215,6 +215,7 @@ const markdownSample = `
 
 const renderedHtml = sb1.renderGeminiMarkdown(markdownSample);
 
+assert(renderedHtml.includes('id="peEmbeddedGraphsMount"'), "Must mount peEmbeddedGraphsMount directly before Section 1");
 assert(renderedHtml.includes("jumpToPerformanceChart('scaledScore')"), "Must render pill for Score Trajectory Graph");
 assert(renderedHtml.includes("jumpToPerformanceChart('avgPassageWpm')"), "Must render pill for Reading Speed Graph");
 assert(renderedHtml.includes("jumpToPerformanceChart('avgSessionFatigueDelta')"), "Must render pill for Session Fatigue Delta Graph");
@@ -227,16 +228,16 @@ console.log("✓ Test 4 Passed: Graph pill formatting correctly handles bolded, 
 // ----------------------------------------------------
 console.log("\n--- TEST 5: Legacy Cache Invalidation & Upgrade Flag ---");
 const { sandbox: sbCache, mockStorage } = setupContext({
-  // Legacy cache from prompt v1 without graph trajectory citations
+  // Legacy cache from prompt v1 without graph trajectory citations or version < 3
   drillroom_ai_analysis_pe_cars_1: JSON.stringify({
     text: "# Executive Summary\nYou scored 127 in CARS. Work on passage main ideas and timing.",
     modelUsed: "gemini-1.5-flash",
     ts: Date.now() - 3600000
     // No version field and no graph mentions
   }),
-  // Modern cache with version: 2 and graph trajectory mentions
+  // Modern cache with version: 3 and graph trajectory mentions
   drillroom_ai_analysis_pe_cars_2: JSON.stringify({
-    version: 2,
+    version: 3,
     text: "# Executive Summary\nYour [Score Trajectory Graph] is climbing. [Reading Speed Graph] confirms stamina.",
     modelUsed: "gemini-1.5-flash",
     ts: Date.now()
@@ -251,14 +252,14 @@ const modernCached = sbCache.getCachedGeminiAnalysis("pe_cars_2");
 assert(modernCached !== null, "Modern cached entry should exist");
 assert.strictEqual(modernCached.isLegacy, false, "Modern cached entry must NOT be flagged as legacy");
 
-// Test saving cache with version 2
+// Test saving cache with version 3
 sbCache.saveCachedGeminiAnalysis = (id, obj) => {
-  mockStorage["drillroom_ai_analysis_" + id] = JSON.stringify({ ...obj, version: 2 });
+  mockStorage["drillroom_ai_analysis_" + id] = JSON.stringify({ ...obj, version: 3 });
 };
 sbCache.saveCachedGeminiAnalysis("pe_cars_3", { text: "Testing graph save", modelUsed: "gemini-1.5-flash" });
 const saved = JSON.parse(mockStorage["drillroom_ai_analysis_pe_cars_3"]);
-assert.strictEqual(saved.version, 2, "Newly saved analysis must have version: 2");
+assert.strictEqual(saved.version, 3, "Newly saved analysis must have version: 3");
 
-console.log("✓ Test 5 Passed: Legacy cache entries detected and new entries saved with version 2!");
+console.log("✓ Test 5 Passed: Legacy cache entries detected and new entries saved with version 3!");
 
 console.log("\n>>> ALL AI SUMMARY GRAPH ENFORCEMENT & CACHE TESTS PASSED 100% <<<");
