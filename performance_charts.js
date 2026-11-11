@@ -1328,10 +1328,11 @@ ${dataset.points.map(p => `- ${p.label}: **${p.displayVal}** (${p.sec || 'Sectio
 ${customQuestion ? `The student is asking this specific follow-up question about this trend:\n"${customQuestion}"\n` : ""}
 
 ### INSTRUCTIONS:
-Generate a concise, high-impact MCAT Trend Assessment (under 250 words total) structured with these exact sections:
-1. **Trajectory & Pacing Reality:** Direct assessment of whether they are improving, stabilizing, or experiencing cognitive fatigue/plateauing. Cite the specific numbers and contrast against AAMC benchmarks.
-2. **Cognitive Fatigue & Speed Diagnosis:** Diagnose what their passage reading pace or question solving speed reveals about their comprehension trade-off. Are they rushing early or fatiguing late?
-3. **#1 Tactical Drill to Deploy on Next Section:** Give 1 ultra-specific, concrete execution rule or heuristic to optimize this metric immediately.`;
+Generate a concise, high-impact MCAT Trend Assessment (under 280 words total) structured with these exact sections:
+1. **Trajectory & Pacing Reality:** Direct assessment of whether they are improving, stabilizing, or experiencing cognitive fatigue/plateauing. Cite the specific numbers and contrast against earlier sessions and AAMC benchmarks.
+2. **Comparison to Previous Sessions & Cross-Graph Correlation:** Explicitly contrast where the student is now compared to their earlier baseline attempts on this dimension. Cross-reference other critical graphs in Performance Charts (such as the Score Trajectory Graph, Passage Reading Speed Graph, Session Fatigue Delta Graph, or Time Sinks Graph) to explain the underlying cognitive cause.
+3. **Cognitive Fatigue & Speed Diagnosis:** Diagnose what their passage reading pace or question solving speed reveals about their comprehension trade-off. Are they rushing early or fatiguing late?
+4. **#1 Tactical Drill to Deploy on Next Section:** Give 1 ultra-specific, concrete execution rule or heuristic to optimize this metric immediately.`;
 
     try {
       const model = (typeof window.getGeminiModel === "function") ? window.getGeminiModel() : "gemini-2.5-flash";

@@ -374,14 +374,180 @@
     return out.join("\n");
   }
 
+  function jumpToPerformanceChart(metricId) {
+    if (typeof window !== "undefined") {
+      if (typeof window.chartState !== "undefined") {
+        if (metricId) {
+          window.chartState.yMetric = metricId;
+          const sessionMetrics = [
+            "avgPassageReadSec", "avgPassageWpm", "scaledScore", "pct",
+            "avgQSec", "solidRatio", "guessCount", "netSecondGuessing",
+            "avgSessionFatigueDelta", "lateStageAccuracyDelta",
+            "pacingConsistency", "timeSinkCount", "timeUsedMinutes"
+          ];
+          if (sessionMetrics.includes(metricId)) {
+            window.chartState.xAxisMode = "sessions";
+            window.chartState.scope = "sessions";
+            window.chartState.acrossY = metricId;
+          } else {
+            window.chartState.xAxisMode = "passages_all";
+            window.chartState.scope = "passages_all";
+            window.chartState.withinY = metricId;
+          }
+        }
+      }
+
+      // Check if we can switch tab to history
+      const tabBtn = document.querySelector('button.tab[data-t="history"]') || document.querySelector('[data-tab="history"]');
+      if (tabBtn) {
+        tabBtn.click();
+        setTimeout(() => {
+          const mount = document.getElementById("peHistChartMount");
+          if (mount) {
+            if (typeof window.renderPerformanceCharts === "function") {
+              window.renderPerformanceCharts(mount);
+            }
+            mount.scrollIntoView({ behavior: "smooth", block: "start" });
+          }
+        }, 120);
+      } else {
+        const mount = document.getElementById("peHistChartMount");
+        if (mount) {
+          if (typeof window.renderPerformanceCharts === "function") {
+            window.renderPerformanceCharts(mount);
+          }
+          mount.scrollIntoView({ behavior: "smooth", block: "start" });
+        }
+      }
+    }
+  }
+
   function inlineFormat(text) {
     if (!text) return "";
-    return text
+    let formatted = text
       .replace(/\*\*(.*?)\*\*/g, "<strong>$1</strong>")
       .replace(/__(.*?)__/g, "<strong>$1</strong>")
       .replace(/\*(.*?)\*/g, "<em>$1</em>")
       .replace(/_(.*?)_/g, "<em>$1</em>")
       .replace(/`([^`]+)`/g, '<code style="background:#EBF0F5;color:#1B3A5C;padding:1px 5px;border-radius:3px;font-family:monospace;font-size:12.5px;font-weight:600">$1</code>');
+
+    // Interactive Graph Pills for named graphs
+    const graphMap = [
+      { pattern: /\[?(Session Fatigue Delta Graph|Fatigue Delta Graph)\]?/gi, id: "avgSessionFatigueDelta", name: "Session Fatigue Delta Graph" },
+      { pattern: /\[?(Passage Reading Speed Graph|Reading Speed Graph|Reading Speed Trajectory Graph)\]?/gi, id: "avgPassageWpm", name: "Reading Speed Graph" },
+      { pattern: /\[?(Passage Reading Time Graph|Reading Time Graph)\]?/gi, id: "avgPassageReadSec", name: "Reading Time Graph" },
+      { pattern: /\[?(Score Trajectory Graph|Scaled Score Graph)\]?/gi, id: "scaledScore", name: "Score Trajectory Graph" },
+      { pattern: /\[?(Endurance Accuracy Delta Graph|Late-Stage Accuracy Graph)\]?/gi, id: "lateStageAccuracyDelta", name: "Endurance Accuracy Delta Graph" },
+      { pattern: /\[?(Time Sinks Graph|Sunk-Cost Graph|Time-Sink Graph)\]?/gi, id: "timeSinkCount", name: "Time Sinks Graph" },
+      { pattern: /\[?(Second-Guessing Net Impact Graph|Net Impact Graph)\]?/gi, id: "netSecondGuessing", name: "Second-Guessing Net Impact Graph" },
+      { pattern: /\[?(Question Pace Graph|Question Solving Pace Graph)\]?/gi, id: "avgQSec", name: "Question Pace Graph" }
+    ];
+
+    graphMap.forEach(g => {
+      formatted = formatted.replace(g.pattern, `<a href="javascript:void(0)" onclick="window.jumpToPerformanceChart &amp;&amp; window.jumpToPerformanceChart('${g.id}')" style="display:inline-flex;align-items:center;background:#EDF4FB;color:#185A9D;border:1px solid #B8D5E5;padding:1px 6px;border-radius:3px;font-weight:600;font-size:11.5px;text-decoration:none;margin:0 2px" title="Click to inspect this graph in Performance Charts">${g.name} &rarr;</a>`);
+    });
+
+    return formatted;
+  }
+
+  /* ===== HISTORICAL TRAJECTORY EXTRACTION ===== */
+  function extractHistoricalTrajectory(info) {
+    if (!info) return null;
+
+    let allSessions = [];
+    if (typeof window !== "undefined" && typeof window.getAllEnrichedSessions === "function") {
+      try { allSessions = window.getAllEnrichedSessions() || []; } catch(e) { allSessions = []; }
+    } else if (typeof globalThis !== "undefined" && typeof globalThis.getAllEnrichedSessions === "function") {
+      try { allSessions = globalThis.getAllEnrichedSessions() || []; } catch(e) { allSessions = []; }
+    }
+
+    if (!allSessions.length) {
+      let rawHist = [];
+      if (typeof window !== "undefined" && typeof window.getHistory === "function") {
+        try { rawHist = window.getHistory() || []; } catch(e) { rawHist = []; }
+      } else if (typeof globalThis !== "undefined" && typeof globalThis.getHistory === "function") {
+        try { rawHist = globalThis.getHistory() || []; } catch(e) { rawHist = []; }
+      } else if (typeof localStorage !== "undefined") {
+        try { rawHist = JSON.parse(localStorage.getItem("drillroom_history_v1")) || []; } catch(e) { rawHist = []; }
+      }
+      if (typeof window !== "undefined" && typeof window.enrichSessionWithStats === "function") {
+        allSessions = rawHist.map(window.enrichSessionWithStats).filter(Boolean);
+      } else if (typeof globalThis !== "undefined" && typeof globalThis.enrichSessionWithStats === "function") {
+        allSessions = rawHist.map(globalThis.enrichSessionWithStats).filter(Boolean);
+      } else {
+        allSessions = rawHist;
+      }
+    }
+
+    if (!Array.isArray(allSessions) || !allSessions.length) return null;
+
+    // Filter out current exam session so we compare against PRIOR attempts
+    const prior = allSessions.filter(s => s.id !== info.examId && s.examId !== info.examId);
+    if (!prior.length) return null;
+
+    // Sort chronologically
+    prior.sort((a, b) => (a.ts || 0) - (b.ts || 0));
+
+    // Prefer same-subject attempts if available, else all attempts
+    const sameSec = prior.filter(s => s.sec === info.sec);
+    const pool = sameSec.length >= 1 ? sameSec : prior;
+    const isSameSubjectPool = sameSec.length >= 1;
+
+    const n = pool.length;
+    const avgScaled = (pool.reduce((sum, s) => sum + (s.scaledScore || 125), 0) / n).toFixed(1);
+    const avgPct = Math.round(pool.reduce((sum, s) => sum + (s.pct || 0), 0) / n);
+    const avgWpm = Math.round(pool.reduce((sum, s) => sum + (s.avgPassageWpm || 200), 0) / n);
+    const avgReadSec = Math.round(pool.reduce((sum, s) => sum + (s.avgPassageReadSec || 200), 0) / n);
+    const avgFatigue = Math.round(pool.reduce((sum, s) => sum + (s.avgSessionFatigueDelta || 0), 0) / n);
+    const avgLateAccDelta = Math.round(pool.reduce((sum, s) => sum + (s.lateStageAccuracyDelta || 0), 0) / n);
+    const avgQSec = Math.round(pool.reduce((sum, s) => sum + (s.avgQSec || 60), 0) / n);
+    const avgTimeSinks = (pool.reduce((sum, s) => sum + (s.timeSinkCount || 0), 0) / n).toFixed(1);
+    const avgNetSecondGuess = (pool.reduce((sum, s) => sum + (s.netSecondGuessing || 0), 0) / n).toFixed(1);
+    const avgSolidRatio = Math.round(pool.reduce((sum, s) => sum + (s.solidRatio || 70), 0) / n);
+
+    const last = pool[pool.length - 1];
+
+    return {
+      priorCount: n,
+      isSameSubjectPool,
+      subject: info.sec,
+      baseline: {
+        scaledScore: parseFloat(avgScaled),
+        pct: avgPct,
+        avgPassageWpm: avgWpm,
+        avgPassageReadSec: avgReadSec,
+        avgSessionFatigueDelta: avgFatigue,
+        lateStageAccuracyDelta: avgLateAccDelta,
+        avgQSec: avgQSec,
+        timeSinkCount: parseFloat(avgTimeSinks),
+        netSecondGuessing: parseFloat(avgNetSecondGuess),
+        solidRatio: avgSolidRatio
+      },
+      lastSession: {
+        title: last.suiteTitle || last.label,
+        date: new Date(last.ts || Date.now()).toLocaleDateString([], { month: "short", day: "numeric" }),
+        scaledScore: last.scaledScore || 125,
+        pct: last.pct || 0,
+        avgPassageWpm: last.avgPassageWpm || 200,
+        avgPassageReadSec: last.avgPassageReadSec || 210,
+        avgSessionFatigueDelta: last.avgSessionFatigueDelta !== undefined ? last.avgSessionFatigueDelta : 0,
+        avgQSec: last.avgQSec || 60,
+        timeSinkCount: last.timeSinkCount || 0,
+        netSecondGuessing: last.netSecondGuessing || 0
+      },
+      recentTrend: pool.slice(-4).map((s, idx) => ({
+        index: idx + 1,
+        title: s.suiteTitle || s.label,
+        date: new Date(s.ts || Date.now()).toLocaleDateString([], { month: "short", day: "numeric" }),
+        sec: s.sec,
+        scaledScore: s.scaledScore || 125,
+        pct: s.pct || 0,
+        avgPassageWpm: s.avgPassageWpm || 200,
+        avgSessionFatigueDelta: s.avgSessionFatigueDelta !== undefined ? s.avgSessionFatigueDelta : 0,
+        avgQSec: s.avgQSec || 60,
+        timeSinkCount: s.timeSinkCount || 0
+      }))
+    };
   }
 
   /* ===== BUILD PROMPT FROM EXAM STATE ===== */
@@ -515,6 +681,79 @@
       });
     }
 
+    // Historical Trajectory & Graph Comparison Data
+    let thisWpm = 200;
+    let thisReadSec = 210;
+    let thisFatigueDelta = 0;
+    if (pList.length > 0) {
+      const unskipped = pList.filter(p => !p.isSkipped && (p.readSec || p.seconds || p.elapsedSec) > 0);
+      if (unskipped.length > 0) {
+        thisReadSec = Math.round(unskipped.reduce((sum, p) => sum + (p.readSec || p.seconds || p.elapsedSec || 0), 0) / unskipped.length);
+        thisWpm = Math.round(unskipped.reduce((sum, p) => sum + (p.wpm || (p.readSec > 0 ? Math.round((p.wordCount / p.readSec) * 60) : 0)), 0) / unskipped.length);
+      }
+      if (pList.length >= 2) {
+        const p1Sec = (pList[0].readSec || pList[0].seconds || pList[0].elapsedSec) || thisReadSec;
+        const subPassages = pList.slice(1).filter(p => !p.isSkipped);
+        if (subPassages.length > 0) {
+          const drifts = subPassages.map(p => ((p.readSec || p.seconds || p.elapsedSec || 0) - p1Sec));
+          thisFatigueDelta = Math.round(drifts.reduce((a, b) => a + b, 0) / drifts.length);
+        }
+      }
+    }
+    const thisTimeSinks = (info.timeSinkQuestions && info.timeSinkQuestions.length) || 0;
+    const thisNetGuess = (info.answerChangeAudit && info.answerChangeAudit.totalChanges > 0)
+      ? (info.answerChangeAudit.wrongToRight - info.answerChangeAudit.rightToWrong)
+      : 0;
+
+    let comparativeSection = "";
+    const hist = extractHistoricalTrajectory(info);
+
+    if (hist && hist.priorCount > 0) {
+      const scoreDelta = (info.scaledScore - hist.baseline.scaledScore).toFixed(1);
+      const scoreDeltaStr = (parseFloat(scoreDelta) >= 0 ? "+" : "") + scoreDelta;
+      const wpmDelta = Math.round(thisWpm - hist.baseline.avgPassageWpm);
+      const wpmDeltaStr = (wpmDelta >= 0 ? "+" : "") + wpmDelta;
+      const readSecDelta = Math.round(thisReadSec - hist.baseline.avgPassageReadSec);
+      const readSecDeltaStr = (readSecDelta >= 0 ? "+" : "") + readSecDelta + "s";
+      const fatigueDeltaDiff = Math.round(thisFatigueDelta - hist.baseline.avgSessionFatigueDelta);
+      const fatigueDeltaDiffStr = (fatigueDeltaDiff <= 0 ? "" : "+") + fatigueDeltaDiff + "s drift";
+      const qSecDelta = Math.round((info.avgQSec || 55) - hist.baseline.avgQSec);
+      const qSecDeltaStr = (qSecDelta <= 0 ? "" : "+") + qSecDelta + "s";
+      const timeSinksDelta = (thisTimeSinks - hist.baseline.timeSinkCount).toFixed(1);
+      const timeSinksDeltaStr = (parseFloat(timeSinksDelta) <= 0 ? "" : "+") + timeSinksDelta;
+      const netGuessDelta = (thisNetGuess - hist.baseline.netSecondGuessing).toFixed(1);
+      const netGuessDeltaStr = (parseFloat(netGuessDelta) >= 0 ? "+" : "") + netGuessDelta;
+
+      comparativeSection = `
+### MULTI-SESSION HISTORICAL TRAJECTORY & GRAPH COMPARISON:
+The student has completed ${hist.priorCount} previous practice session(s) in DrillRoom (${hist.isSameSubjectPool ? `${info.sec} subject pool` : 'across subjects'}). Contrast their current performance against their historical baseline and recent progression:
+
+| Performance Metric & Graph | Current Session | Prior Session (${hist.lastSession.date}) | Historical Baseline (${hist.priorCount} Attempts) | Trajectory Delta vs Baseline | AAMC Target Benchmark |
+| :--- | :---: | :---: | :---: | :---: | :---: |
+| **Scaled Score** (Score Trajectory Graph) | **${info.scaledScore}** / 132 | ${hist.lastSession.scaledScore} / 132 | ${hist.baseline.scaledScore} / 132 | **${scoreDeltaStr} pts** | 128+ Competitive Threshold |
+| **Passage Reading Speed** (Reading Speed Graph) | **${thisWpm} WPM** | ${hist.lastSession.avgPassageWpm} WPM | ${hist.baseline.avgPassageWpm} WPM | **${wpmDeltaStr} WPM** | 200–260 WPM Target Pace |
+| **Passage Reading Time** (Reading Time Graph) | **${Math.floor(thisReadSec / 60)}m ${String(thisReadSec % 60).padStart(2, "0")}s** | ${Math.floor(hist.lastSession.avgPassageReadSec / 60)}m ${String(hist.lastSession.avgPassageReadSec % 60).padStart(2, "0")}s | ${Math.floor(hist.baseline.avgPassageReadSec / 60)}m ${String(hist.baseline.avgPassageReadSec % 60).padStart(2, "0")}s | **${readSecDeltaStr}** | 3:00–4:00 Benchmark |
+| **Session Fatigue Drift vs P1** (Session Fatigue Delta Graph) | **${thisFatigueDelta >= 0 ? "+" : ""}${thisFatigueDelta}s vs P1** | ${hist.lastSession.avgSessionFatigueDelta >= 0 ? "+" : ""}${hist.lastSession.avgSessionFatigueDelta}s | ${hist.baseline.avgSessionFatigueDelta >= 0 ? "+" : ""}${hist.baseline.avgSessionFatigueDelta}s | **${fatigueDeltaDiffStr}** | 0s (Zero Cognitive Fatigue Drift) |
+| **Question Solving Pace** (Question Pace Graph) | **${info.avgQSec || 55}s / Q** | ${hist.lastSession.avgQSec}s / Q | ${hist.baseline.avgQSec}s / Q | **${qSecDeltaStr}** | 45–80s Optimal Pace |
+| **Sunk-Cost Questions (>100s)** (Time Sinks Graph) | **${thisTimeSinks} time sinks** | ${hist.lastSession.timeSinkCount} sinks | ${hist.baseline.timeSinkCount} sinks / session | **${timeSinksDeltaStr} sinks** | 0 Sunk Costs (Strict 90s Rule) |
+| **Second-Guessing Net Impact** (Net Impact Graph) | **${thisNetGuess >= 0 ? "+" : ""}${thisNetGuess} pts** | ${hist.lastSession.netSecondGuessing >= 0 ? "+" : ""}${hist.lastSession.netSecondGuessing} pts | ${hist.baseline.netSecondGuessing >= 0 ? "+" : ""}${hist.baseline.netSecondGuessing} pts | **${netGuessDeltaStr} pts** | >= 0 (Break-even or Gain) |
+
+**Recent Chronological Progression:**
+${hist.recentTrend.map(s => `- ${s.date} • ${s.title}: Scaled **${s.scaledScore}/132** | Reading: **${s.avgPassageWpm} WPM** | Fatigue Drift: **${s.avgSessionFatigueDelta >= 0 ? "+" : ""}${s.avgSessionFatigueDelta}s** | Pure Q Pace: **${s.avgQSec}s** | Time Sinks: **${s.timeSinkCount}**`).join("\n")}
+`;
+    } else {
+      comparativeSection = `
+### INITIAL BASELINE CALIBRATION (FIRST RECORDED SESSION):
+This is the student's first recorded practice attempt in DrillRoom. Establish their initial performance benchmark:
+- **Baseline Scaled Score:** ${info.scaledScore} / 132 (Target: 128+)
+- **Baseline Analytical Reading Speed:** ${thisWpm} WPM (Target: 200–260 WPM)
+- **Baseline Cognitive Fatigue Drift:** ${thisFatigueDelta >= 0 ? "+" : ""}${thisFatigueDelta}s vs Passage 1 (Target: 0s)
+- **Baseline Question Solving Pace:** ~${info.avgQSec || 55}s / Q (Target: 45–80s)
+- **Baseline Time Sinks (>100s):** ${thisTimeSinks}
+Detail the specific Performance Charts graphs they must monitor across subsequent attempts to confirm endurance and pacing gains.
+`;
+    }
+
     return `You are an elite, world-class MCAT tutor and former AAMC item writer with deep expertise in psychometrics, distractor trap design, and high-yield medical school admissions content.
 
 The student just completed a timed practice section in the DrillRoom MCAT app:
@@ -530,6 +769,8 @@ The student just completed a timed practice section in the DrillRoom MCAT app:
 
 ${timingSection}
 
+${comparativeSection}
+
 Here is the comprehensive log of every question where the student dropped points, spent excessive time, OR experienced uncertainty (guesses and 50/50 coin flips that hide latent weaknesses):
 
 ${reviewText}
@@ -543,30 +784,41 @@ CRITICAL REQUIREMENT: The student wants an immediate, high-yield summary right a
 You MUST begin your response with this exact Executive Summary block:
 
 # Executive Summary: What You Most Need to Work On
-(Keep this upfront summary ultra-concise, scannable, and under 150 words total)
+(Keep this upfront summary ultra-concise, scannable, and under 170 words total)
 
 > [!IMPORTANT]
 > **Priority Focus / #1 Blindspot:** [1 clear, uncompromising sentence pinpointing the specific conceptual gap, distractor trap, or cognitive error that dropped the most points in this section.]
 > 
 > **Pacing Reality:** [1 clear sentence summarizing their true pacing — citing their net question solving speed of ~${info.avgQSec || 55}s/question and passage reading pace, noting that timing is sound and where to maintain discipline.]
 > 
+> **Trajectory vs Previous Sessions:** [1–2 sentences directly comparing this attempt to their historical baseline, citing key graphs like the Session Fatigue Delta Graph, Passage Reading Speed Graph, and Score Trajectory Graph (e.g. "Up +2.5 scaled points vs your 129.5 baseline; reading speed accelerated to ${thisWpm} WPM on the Reading Speed Graph, and fatigue drift dropped by 20s on the Session Fatigue Delta Graph, confirming cognitive stamina conditioning.")]
+> 
 > **#1 Rule for Your Next Section:** [1 punchy, memorable test-taking rule to deploy immediately on their next passage or section.]
 
 ### Quick Priority Punch List
 - **What Dropped Points:** [1–2 crisp sentences diagnosing the root cause behind their misses/guesses.]
 - **What Succeeded:** [1 sentence validating genuine mastery, strong comprehension, and uninflated accuracy.]
+- **Trajectory Delta:** [1 sentence summarizing where they moved compared to prior attempts, and which graph in Performance Charts confirms it.]
 - **Immediate Action Item:** [1 specific drill or rule to execute immediately.]
 
 ---
 
-# 1. Executive Score Diagnostic & Metacognitive Calibration
+# 1. Trajectory Comparison: Where You Stand vs Previous Sessions
+Synthesize where the student stands today compared to their earlier sessions using the multi-session comparison table and important graphs:
+- **Score Progression & Reliability (Score Trajectory Graph):** Contrast their current score (${info.scaledScore}/132) against their historical baseline. Is their performance stabilizing, reaching a new peak, or fluctuating?
+- **Passage Reading Speed & Analytical Stamina (Passage Reading Speed Graph & Reading Time Graph):** Compare reading speed (${thisWpm} WPM) and duration against prior attempts. Did faster reading sacrifice comprehension, or did it unlock extra question answering buffer?
+- **Cognitive Endurance & Fatigue Elimination (Session Fatigue Delta Graph & Endurance Accuracy Delta Graph):** Evaluate whether reading time drift on later passages is compressing toward the 0s baseline compared to earlier sessions. Are they eliminating late-section stamina drop-offs?
+- **Pacing Discipline & Sunk-Cost Elimination (Time Sinks Graph & Second-Guessing Net Impact Graph):** Compare time-sink frequency (>100s questions) and answer-switching discipline against earlier sessions.
+- **Recommended Graphs to Inspect in Performance Charts:** Explicitly name the 2–3 specific graphs in DrillRoom's Performance Charts (e.g., Session Fatigue Delta Graph, Reading Speed Graph, Score Trajectory Graph) that provide the most critical diagnostic visual for their next training cycle.
+
+# 2. Executive Score Diagnostic & Metacognitive Calibration
 - Diagnose their scaled score (${info.scaledScore}/132) against competitive medical school thresholds (500 median, 510 competitive, 515+ top tier).
 - Perform a calibration audit:
   * Are they "Confidently Wrong" (committing to misses with high conviction)? Explain why this indicates false mental models rather than memory lapses.
   * Are they "Underconfident" (second-guessing valid scientific intuition)?
   * How much did lucky guesses artificially inflate their raw accuracy?
 
-# 2. Pacing Calibration & Question Archetype Speed Strategy
+# 3. Pacing Calibration & Question Archetype Speed Strategy
 - Analyze the Question Archetype timing table and passage reading metrics above:
   * Pinpoint exactly which question archetypes consumed excessive time or had poor accuracy.
   * Prescribe 2–3 concrete, tactical heuristics to cut 20–30 seconds per question on those specific archetypes.
@@ -574,7 +826,7 @@ You MUST begin your response with this exact Executive Summary block:
   * Second-guessing analysis: based on the answer-change audit, provide rules for when to trust first instinct vs when a switch is justified.
   * Sunk-cost elimination: establish a hard 90-second cutoff rule for stubborn questions.
 
-# 3. AAMC Question Architecture & Distractor Trap Anatomy
+# 4. AAMC Question Architecture & Distractor Trap Anatomy
 Identify the exact structural traps present in the questions they missed or struggled with. Classify errors under these authentic AAMC distractor patterns:
 - **True Fact, Wrong Question**: Choices that state scientifically correct facts from the passage or textbook, but fail to directly answer the stem constraint.
 - **Opposite Relationship / Directional Inversion**: Inverting mathematical proportionalities, reaction equilibrium shifts (Le Chatelier), or physiological feedback loops.
@@ -583,16 +835,16 @@ Identify the exact structural traps present in the questions they missed or stru
 - **Data & Experimental Misinterpretation**: Errors in reading control baselines, error bars, or confounding variables in tables/figures.
 For each category found in their test, cite the specific question number(s) and explain how the AAMC engineered the trap to deceive test-takers.
 
-# 4. High-Yield Content & Mechanistic Remediation
+# 5. High-Yield Content & Mechanistic Remediation
 Group their conceptual errors into core scientific or CARS reasoning domains. Explain the underlying physiology, reaction mechanism, physics equation, or CARS argumentation principle with crystal clarity so they master the mechanism permanently.
 
-# 5. Tactical MCAT Test-Taking Techniques to Deploy Immediately
+# 6. Tactical MCAT Test-Taking Techniques to Deploy Immediately
 Provide 3 battle-tested, concrete techniques tailored specifically to the flaws seen in this session:
 - **The 3-Word Stem Rephrase**: How to reword convoluted stems before looking at answer choices.
 - **Process of Elimination (POOE) Heuristics**: How to eliminate 2 wrong choices in under 15 seconds.
 - **Passage & Data Interrogation Rule**: How to extract independent/dependent variables and trends from data tables in under 20 seconds without getting bogged down in background text.
 
-# 6. 48-Hour High-Yield Action Plan
+# 7. 48-Hour High-Yield Action Plan
 Give the student a prioritized checklist of 3–4 ultra-specific topics, equations, or drills to execute over the next 48 hours to claw back 2–3 scaled points on their next section.`;
   }
 
@@ -764,6 +1016,7 @@ Give the student a prioritized checklist of 3–4 ultra-specific topics, equatio
       archetypeList,
       answerChangeAudit,
       timeSinkQuestions,
+      historicalTrajectory: extractHistoricalTrajectory({ examId, sec }),
       avgQSec
     };
   }
@@ -1467,14 +1720,32 @@ Give the student a prioritized checklist of 3–4 ultra-specific topics, equatio
   window.callGeminiAPI = callGeminiAPI;
   window.getGeminiApiKey = getApiKey;
   window.getGeminiModel = getModel;
+  window.jumpToPerformanceChart = jumpToPerformanceChart;
+  window.extractHistoricalTrajectory = extractHistoricalTrajectory;
+
+  if (typeof globalThis !== "undefined") {
+    globalThis.renderGeminiExamCard = renderGeminiExamCard;
+    globalThis.showGeminiSettingsModal = showGeminiSettingsModal;
+    globalThis.getCachedGeminiAnalysis = getCachedAnalysis;
+    globalThis.renderGeminiMarkdown = renderMarkdown;
+    globalThis.buildDiagnosticPrompt = buildDiagnosticPrompt;
+    globalThis.extractCurrentExamInfo = extractCurrentExamInfo;
+    globalThis.callGeminiAPI = callGeminiAPI;
+    globalThis.getGeminiApiKey = getApiKey;
+    globalThis.getGeminiModel = getModel;
+    globalThis.jumpToPerformanceChart = jumpToPerformanceChart;
+    globalThis.extractHistoricalTrajectory = extractHistoricalTrajectory;
+  }
 
   // Auto-init hooks after DOM is ready
-  window.addEventListener("DOMContentLoaded", () => {
-    // If top-bar key button exists, hook it
-    const topKeyBtn = document.getElementById("tGeminiKey");
-    if (topKeyBtn) topKeyBtn.onclick = () => showGeminiSettingsModal();
+  if (typeof window !== "undefined" && typeof window.addEventListener === "function") {
+    window.addEventListener("DOMContentLoaded", () => {
+      // If top-bar key button exists, hook it
+      const topKeyBtn = document.getElementById("tGeminiKey");
+      if (topKeyBtn) topKeyBtn.onclick = () => showGeminiSettingsModal();
 
-    const homeKeyBtn = document.getElementById("bGeminiKey");
-    if (homeKeyBtn) homeKeyBtn.onclick = () => showGeminiSettingsModal();
-  });
+      const homeKeyBtn = document.getElementById("bGeminiKey");
+      if (homeKeyBtn) homeKeyBtn.onclick = () => showGeminiSettingsModal();
+    });
+  }
 })();
