@@ -103,6 +103,7 @@
       label: "Second-Guessing Net Impact",
       shortLabel: "Net Impact",
       unit: "pts",
+      isDelta: true,
       formatVal: (v) => `${v > 0 ? "+" + v : v} points`,
       formatTick: (v) => `${v > 0 ? "+" + v : v}`,
       benchmark: { line: 0, label: "Break-even (0)" },
@@ -118,6 +119,56 @@
       formatVal: (v) => `${Math.round(v)} min`,
       formatTick: (v) => `${Math.round(v)}m`,
       desc: "Total duration spent completing the practice section.",
+      lowerIsBetter: true
+    },
+    avgSessionFatigueDelta: {
+      id: "avgSessionFatigueDelta",
+      scope: "across",
+      label: "Session Fatigue Delta (Pacing Drift vs P1)",
+      shortLabel: "Fatigue Delta",
+      unit: "s",
+      isDelta: true,
+      formatVal: (v) => `${v > 0 ? "+" + Math.round(v) : Math.round(v)}s vs P1`,
+      formatTick: (v) => `${v > 0 ? "+" + Math.round(v) : Math.round(v)}s`,
+      benchmark: { line: 0, label: "Zero Fatigue (0s)" },
+      desc: "Average reading time difference on subsequent passages compared to Passage 1. Trends downward toward 0s show cognitive stamina building and fatigue reduction over time.",
+      lowerIsBetter: true
+    },
+    lateStageAccuracyDelta: {
+      id: "lateStageAccuracyDelta",
+      scope: "across",
+      label: "Endurance Accuracy Delta (Late vs Early Passages)",
+      shortLabel: "Accuracy Delta",
+      unit: "%",
+      isDelta: true,
+      formatVal: (v) => `${v > 0 ? "+" + Math.round(v) : Math.round(v)}% late vs early`,
+      formatTick: (v) => `${v > 0 ? "+" + Math.round(v) : Math.round(v)}%`,
+      benchmark: { line: 0, label: "Zero Drop (0%)" },
+      desc: "Accuracy difference between second-half passages and first-half passages. Trends toward 0% or positive prove eliminating late-section fatigue drop-offs.",
+      higherIsBetter: true
+    },
+    pacingConsistency: {
+      id: "pacingConsistency",
+      scope: "across",
+      label: "Pacing Consistency / Std Dev (Seconds)",
+      shortLabel: "Pacing Std Dev",
+      unit: "s",
+      formatVal: (v) => `\u00B1${Math.round(v)}s std dev`,
+      formatTick: (v) => `\u00B1${Math.round(v)}s`,
+      benchmark: { min: 10, max: 25, label: "Target (10 - 25s)" },
+      desc: "Standard deviation of question solving times. Lower values reflect steady, disciplined question pacing without time sinks.",
+      lowerIsBetter: true
+    },
+    timeSinkCount: {
+      id: "timeSinkCount",
+      scope: "across",
+      label: "Sunk-Cost Questions Count (>100s)",
+      shortLabel: "Time Sinks",
+      unit: "Qs",
+      formatVal: (v) => `${Math.round(v)} time sinks`,
+      formatTick: (v) => `${Math.round(v)}`,
+      benchmark: { line: 0, label: "Target: 0 Sunk Costs" },
+      desc: "Number of questions taking over 100 seconds to answer. Target is 0 to enforce the hard 90-second cutoff rule.",
       lowerIsBetter: true
     },
 
@@ -200,13 +251,26 @@
     passageFatigueDelta: {
       id: "passageFatigueDelta",
       scope: "within_passage",
-      label: "Fatigue Delta vs Passage 1",
+      label: "Fatigue Delta vs Passage 1 (Slowing Index)",
       shortLabel: "Fatigue Delta",
       unit: "s",
+      isDelta: true,
       formatVal: (v) => `${v > 0 ? "+" + Math.round(v) : Math.round(v)}s vs P1`,
       formatTick: (v) => `${v > 0 ? "+" + Math.round(v) : Math.round(v)}s`,
       benchmark: { line: 0, label: "Baseline (P1)" },
       desc: "Reading duration difference compared to Passage 1 (positive values indicate slowing from fatigue)."
+    },
+    passagePaceDelta: {
+      id: "passagePaceDelta",
+      scope: "within_passage",
+      label: "Reading Pace Delta vs Previous Passage (WPM)",
+      shortLabel: "Pace Delta",
+      unit: "WPM",
+      isDelta: true,
+      formatVal: (v) => `${v > 0 ? "+" + Math.round(v) : Math.round(v)} WPM vs prev`,
+      formatTick: (v) => `${v > 0 ? "+" + Math.round(v) : Math.round(v)} WPM`,
+      benchmark: { line: 0, label: "Even Pace (0 WPM)" },
+      desc: "Reading speed change compared to the preceding passage. Highlights rhythm accelerations and cognitive fatigue dips."
     },
 
     // WITHIN SINGLE SESSION (Question-by-Question)
@@ -368,11 +432,29 @@
       };
     });
 
-    // Fatigue delta vs Passage 1
+    // Fatigue delta vs Passage 1 & Pace delta vs previous passage
     const p1Read = (enrichedPassages[0] && (enrichedPassages[0].readSec || enrichedPassages[0].seconds)) || avgPassageReadSec;
-    enrichedPassages.forEach(p => {
+    enrichedPassages.forEach((p, pIdx) => {
       p.fatigueDelta = (p.readSec || p.seconds || 0) - p1Read;
+      p.paceDelta = pIdx === 0 ? 0 : ((p.wpm || 0) - (enrichedPassages[pIdx - 1].wpm || 0));
     });
+
+    // Session-level fatigue & endurance metrics
+    let avgSessionFatigueDelta = 0;
+    if (enrichedPassages.length >= 2) {
+      const deltas = enrichedPassages.slice(1).map(p => (p.readSec || p.seconds || 0) - p1Read);
+      avgSessionFatigueDelta = Math.round(deltas.reduce((a, b) => a + b, 0) / deltas.length);
+    }
+
+    let lateStageAccuracyDelta = 0;
+    if (enrichedPassages.length >= 2) {
+      const half = Math.floor(enrichedPassages.length / 2);
+      const firstHalf = enrichedPassages.slice(0, half);
+      const secondHalf = enrichedPassages.slice(half);
+      const firstAcc = firstHalf.reduce((sum, p) => sum + (p.acc || 0), 0) / firstHalf.length;
+      const secondAcc = secondHalf.reduce((sum, p) => sum + (p.acc || 0), 0) / secondHalf.length;
+      lateStageAccuracyDelta = Math.round(secondAcc - firstAcc);
+    }
 
     // Enriched questions list
     let enrichedQuestions = qsList.map((q, qIdx) => ({
@@ -397,6 +479,15 @@
       });
     }
 
+    let pacingConsistency = 0;
+    if (enrichedQuestions.length >= 2) {
+      const times = enrichedQuestions.map(q => q.time || avgQSec);
+      const mean = times.reduce((a, b) => a + b, 0) / times.length;
+      const variance = times.reduce((sum, t) => sum + Math.pow(t - mean, 2), 0) / times.length;
+      pacingConsistency = Math.round(Math.sqrt(variance));
+    }
+    const timeSinkCount = enrichedQuestions.filter(q => (q.time || 0) >= 100).length;
+
     return {
       ...rec,
       passageStats: enrichedPassages,
@@ -404,6 +495,10 @@
       avgPassageReadSec,
       avgPassageWpm,
       avgQSec,
+      avgSessionFatigueDelta,
+      lateStageAccuracyDelta,
+      pacingConsistency,
+      timeSinkCount,
       solidRatio: rec.rawScore > 0 ? Math.round(((rec.solid || 0) / rec.rawScore) * 100) : 0,
       guessCount: (rec.lucky || 0) + (rec.shaky || 0),
       netSecondGuessing: rec.reviewData?.telemetry?.answerChangeAudit
@@ -466,6 +561,10 @@
         else if (activeY === "guessCount") yVal = s.guessCount;
         else if (activeY === "netSecondGuessing") yVal = s.netSecondGuessing;
         else if (activeY === "timeUsedMinutes") yVal = s.timeUsedMinutes;
+        else if (activeY === "avgSessionFatigueDelta") yVal = s.avgSessionFatigueDelta !== undefined ? s.avgSessionFatigueDelta : 0;
+        else if (activeY === "lateStageAccuracyDelta") yVal = s.lateStageAccuracyDelta !== undefined ? s.lateStageAccuracyDelta : 0;
+        else if (activeY === "pacingConsistency") yVal = s.pacingConsistency !== undefined ? s.pacingConsistency : 0;
+        else if (activeY === "timeSinkCount") yVal = s.timeSinkCount !== undefined ? s.timeSinkCount : 0;
 
         const d = new Date(s.ts || Date.now());
         const dateStr = d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
@@ -527,6 +626,7 @@
           else if (activeY === "passageTotalTime") yVal = p.totalTime || 0;
           else if (activeY === "passageGuesses" || activeY === "guessCount") yVal = p.guesses || 0;
           else if (activeY === "passageFatigueDelta") yVal = p.fatigueDelta || 0;
+          else if (activeY === "passagePaceDelta") yVal = p.paceDelta || 0;
           else yVal = p.wpm || 0;
 
           const sNum = sIdx + 1;
@@ -626,6 +726,7 @@
           else if (activeY === "passageTotalTime") yVal = p.totalTime || 0;
           else if (activeY === "passageGuesses") yVal = p.guesses || 0;
           else if (activeY === "passageFatigueDelta") yVal = p.fatigueDelta || 0;
+          else if (activeY === "passagePaceDelta") yVal = p.paceDelta || 0;
 
           return {
             xIndex: idx,
@@ -695,24 +796,56 @@
 
     // Expand bounds with benchmark consideration
     const bench = dataset.metricDef.benchmark;
-    if (bench) {
-      if (bench.min !== undefined) minVal = Math.min(minVal, bench.min);
-      if (bench.max !== undefined) maxVal = Math.max(maxVal, bench.max);
-      if (bench.line !== undefined) {
-        minVal = Math.min(minVal, bench.line - 2);
-        maxVal = Math.max(maxVal, bench.line + 2);
+
+    const isDelta = !!(
+      dataset.metricDef.isDelta ||
+      (dataset.metricDef.id && dataset.metricDef.id.toLowerCase().includes("delta")) ||
+      (bench && bench.line === 0) ||
+      dataset.metricDef.id === "netSecondGuessing"
+    );
+
+    let yFloor, yCeil, numYTicks;
+    if (isDelta) {
+      let absMax = Math.max(Math.abs(minVal), Math.abs(maxVal));
+      if (absMax === 0) {
+        absMax = dataset.metricDef.unit === "s" ? 30 : (dataset.metricDef.unit === "%" ? 15 : (dataset.metricDef.unit === "WPM" ? 25 : 4));
       }
+      let M = absMax * 1.18;
+      // Round up to clean increments
+      if (dataset.metricDef.unit === "s") {
+        if (M <= 30) M = Math.ceil(M / 10) * 10;
+        else if (M <= 90) M = Math.ceil(M / 15) * 15;
+        else M = Math.ceil(M / 30) * 30;
+      } else if (dataset.metricDef.unit === "%") {
+        M = Math.ceil(M / 5) * 5;
+      } else if (dataset.metricDef.unit === "pts" || dataset.metricDef.unit === "guesses") {
+        M = Math.ceil(M / 2) * 2;
+      } else if (dataset.metricDef.unit === "WPM") {
+        M = Math.ceil(M / 10) * 10;
+      } else {
+        M = Math.ceil(M / 10) * 10;
+      }
+      yFloor = -M;
+      yCeil = +M;
+      numYTicks = 4; // 4 intervals produces 5 ticks: -M, -M/2, 0, +M/2, +M
+    } else {
+      if (bench) {
+        if (bench.min !== undefined) minVal = Math.min(minVal, bench.min);
+        if (bench.max !== undefined) maxVal = Math.max(maxVal, bench.max);
+        if (bench.line !== undefined) {
+          minVal = Math.min(minVal, bench.line - 2);
+          maxVal = Math.max(maxVal, bench.line + 2);
+        }
+      }
+      if (minVal === maxVal) {
+        minVal = Math.max(0, minVal - 10);
+        maxVal = maxVal + 10;
+      }
+      const valSpan = maxVal - minVal || 1;
+      yFloor = Math.max(0, Math.floor(minVal - valSpan * 0.1));
+      yCeil = Math.ceil(maxVal + valSpan * 0.1);
+      numYTicks = 5;
     }
-
-    if (minVal === maxVal) {
-      minVal = Math.max(0, minVal - 10);
-      maxVal = maxVal + 10;
-    }
-
-    // Add breathing room to Y axis (10% padding top/bottom)
-    const valSpan = maxVal - minVal || 1;
-    const yFloor = Math.max(0, Math.floor(minVal - valSpan * 0.1));
-    const yCeil = Math.ceil(maxVal + valSpan * 0.1);
 
     const getYPx = (v) => padT + plotH - ((v - yFloor) / (yCeil - yFloor)) * plotH;
     const getXPx = (idx) => {
@@ -746,7 +879,7 @@
       ctx.fillText(bench.label, padL + plotW - 6, topY + 12);
     } else if (bench && bench.line !== undefined) {
       const lineY = getYPx(bench.line);
-      ctx.strokeStyle = "rgba(30, 122, 60, 0.6)";
+      ctx.strokeStyle = isDelta ? "rgba(71, 85, 105, 0.75)" : "rgba(30, 122, 60, 0.6)";
       ctx.lineWidth = 1.5;
       ctx.setLineDash([4, 4]);
       ctx.beginPath();
@@ -755,14 +888,13 @@
       ctx.stroke();
       ctx.setLineDash([]);
 
-      ctx.fillStyle = "#1E7A3C";
+      ctx.fillStyle = isDelta ? "#334155" : "#1E7A3C";
       ctx.font = "bold 10.5px Arial, sans-serif";
       ctx.textAlign = "right";
       ctx.fillText(bench.label, padL + plotW - 6, lineY - 4);
     }
 
     // 2. Grid lines & Y Ticks
-    const numYTicks = 5;
     ctx.font = "11px Arial, sans-serif";
     ctx.fillStyle = "#64748B";
     ctx.textAlign = "right";
@@ -770,10 +902,11 @@
     for (let i = 0; i <= numYTicks; i++) {
       const tickVal = yFloor + (i / numYTicks) * (yCeil - yFloor);
       const yPos = getYPx(tickVal);
+      const isZeroBaseline = isDelta && Math.abs(tickVal) < 0.0001;
 
       // Grid line
-      ctx.strokeStyle = "#E2E8F0";
-      ctx.lineWidth = 1;
+      ctx.strokeStyle = isZeroBaseline ? "#475569" : "#E2E8F0";
+      ctx.lineWidth = isZeroBaseline ? 1.8 : 1;
       ctx.beginPath();
       ctx.moveTo(padL, yPos);
       ctx.lineTo(padL + plotW, yPos);
@@ -781,22 +914,40 @@
 
       // Tick text
       const tickStr = dataset.metricDef.formatTick ? dataset.metricDef.formatTick(tickVal) : String(Math.round(tickVal));
+      ctx.fillStyle = isZeroBaseline ? "#0F172A" : "#64748B";
+      ctx.font = isZeroBaseline ? "bold 11px Arial, sans-serif" : "11px Arial, sans-serif";
       ctx.fillText(tickStr, padL - 8, yPos + 3.5);
+
+      if (isZeroBaseline) {
+        ctx.save();
+        ctx.fillStyle = "#475569";
+        ctx.font = "bold 10px Arial, sans-serif";
+        ctx.textAlign = "left";
+        ctx.fillText("0 (Baseline)", padL + 6, yPos - 5);
+        ctx.restore();
+      }
     }
 
     // 3. Area gradient fill under data curve
     if (pts.length > 1) {
+      const yBase = isDelta ? getYPx(0) : (padT + plotH);
       const grad = ctx.createLinearGradient(0, padT, 0, padT + plotH);
-      grad.addColorStop(0, "rgba(24, 90, 157, 0.22)");
-      grad.addColorStop(1, "rgba(24, 90, 157, 0.01)");
+      if (isDelta) {
+        grad.addColorStop(0, "rgba(24, 90, 157, 0.18)");
+        grad.addColorStop(0.5, "rgba(24, 90, 157, 0.03)");
+        grad.addColorStop(1, "rgba(24, 90, 157, 0.18)");
+      } else {
+        grad.addColorStop(0, "rgba(24, 90, 157, 0.22)");
+        grad.addColorStop(1, "rgba(24, 90, 157, 0.01)");
+      }
 
       ctx.fillStyle = grad;
       ctx.beginPath();
-      ctx.moveTo(getXPx(0), padT + plotH);
+      ctx.moveTo(getXPx(0), yBase);
       pts.forEach((p, idx) => {
         ctx.lineTo(getXPx(idx), getYPx(p.val));
       });
-      ctx.lineTo(getXPx(pts.length - 1), padT + plotH);
+      ctx.lineTo(getXPx(pts.length - 1), yBase);
       ctx.closePath();
       ctx.fill();
     }
@@ -826,14 +977,22 @@
 
       // Outer point glow on hover
       if (isHovered) {
-        ctx.fillStyle = "rgba(24, 90, 157, 0.25)";
+        ctx.fillStyle = isDelta
+          ? (p.val > 0 ? "rgba(16, 185, 129, 0.28)" : (p.val < 0 ? "rgba(239, 68, 68, 0.28)" : "rgba(100, 116, 139, 0.28)"))
+          : "rgba(24, 90, 157, 0.25)";
         ctx.beginPath();
         ctx.arc(x, y, 10, 0, Math.PI * 2);
         ctx.fill();
       }
 
       // Point circle
-      ctx.fillStyle = isHovered ? "#0C3259" : "#185A9D";
+      let ptColor = isHovered ? "#0C3259" : "#185A9D";
+      if (isDelta) {
+        if (p.val > 0) ptColor = isHovered ? "#047857" : "#10B981";
+        else if (p.val < 0) ptColor = isHovered ? "#B91C1C" : "#EF4444";
+        else ptColor = isHovered ? "#334155" : "#64748B";
+      }
+      ctx.fillStyle = ptColor;
       ctx.beginPath();
       ctx.arc(x, y, isHovered ? 6 : 4.5, 0, Math.PI * 2);
       ctx.fill();
@@ -1182,6 +1341,7 @@ Generate a concise, high-impact MCAT Trend Assessment (under 250 words total) st
         <option value="passageWordCount" ${activeY === 'passageWordCount' ? 'selected' : ''}>Passage Word Count</option>
         <option value="passageGuesses" ${activeY === 'passageGuesses' ? 'selected' : ''}>Guesses &amp; 50/50s on Passage</option>
         <option value="passageFatigueDelta" ${activeY === 'passageFatigueDelta' ? 'selected' : ''}>Fatigue Delta vs Passage 1 (Slowing Index)</option>
+        <option value="passagePaceDelta" ${activeY === 'passagePaceDelta' ? 'selected' : ''}>Reading Pace Delta vs Previous Passage (WPM)</option>
       `;
     } else if (activeMode === "sessions") {
       yOptionsHtml = `
@@ -1193,6 +1353,10 @@ Generate a concise, high-impact MCAT Trend Assessment (under 250 words total) st
         <option value="solidRatio" ${activeY === 'solidRatio' ? 'selected' : ''}>Solid Mastery Ratio (%)</option>
         <option value="guessCount" ${activeY === 'guessCount' ? 'selected' : ''}>Total Guesses &amp; Coin Flips</option>
         <option value="netSecondGuessing" ${activeY === 'netSecondGuessing' ? 'selected' : ''}>Second-Guessing Net Impact (Points)</option>
+        <option value="avgSessionFatigueDelta" ${activeY === 'avgSessionFatigueDelta' ? 'selected' : ''}>Session Fatigue Delta vs P1 (Endurance Conditioning)</option>
+        <option value="lateStageAccuracyDelta" ${activeY === 'lateStageAccuracyDelta' ? 'selected' : ''}>Endurance Accuracy Delta (Late vs Early Passages)</option>
+        <option value="pacingConsistency" ${activeY === 'pacingConsistency' ? 'selected' : ''}>Pacing Consistency / Std Dev (Seconds)</option>
+        <option value="timeSinkCount" ${activeY === 'timeSinkCount' ? 'selected' : ''}>Sunk-Cost Questions Count (>100s)</option>
         <option value="timeUsedMinutes" ${activeY === 'timeUsedMinutes' ? 'selected' : ''}>Total Section Elapsed Time (Minutes)</option>
       `;
     } else {
