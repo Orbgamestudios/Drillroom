@@ -9,6 +9,7 @@
   const STORAGE_KEY = "drillroom_gemini_api_key";
   const MODEL_KEY = "drillroom_gemini_model";
   const CACHE_PREFIX = "drillroom_ai_analysis_";
+  const PROMPT_VERSION = 2;
 
   const DEFAULT_MODEL = "gemini-1.5-flash";
   const SUPPORTED_MODELS = [
@@ -79,7 +80,17 @@
     if (!examId) return null;
     try {
       const data = localStorage.getItem(CACHE_PREFIX + examId);
-      return data ? JSON.parse(data) : null;
+      if (!data) return null;
+      const parsed = JSON.parse(data);
+      if (parsed && typeof parsed === "object") {
+        const hasGraphMentions = parsed.text && (
+          parsed.text.includes("Graph") ||
+          parsed.text.includes("Trajectory") ||
+          parsed.text.includes("Fatigue Delta")
+        );
+        parsed.isLegacy = !parsed.version || parsed.version < PROMPT_VERSION || !hasGraphMentions;
+      }
+      return parsed;
     } catch (e) {
       return null;
     }
@@ -88,6 +99,9 @@
   function saveCachedAnalysis(examId, analysis) {
     if (!examId) return;
     try {
+      if (analysis && typeof analysis === "object") {
+        analysis.version = PROMPT_VERSION;
+      }
       localStorage.setItem(CACHE_PREFIX + examId, JSON.stringify(analysis));
     } catch (e) {}
   }
@@ -431,20 +445,52 @@
       .replace(/_(.*?)_/g, "<em>$1</em>")
       .replace(/`([^`]+)`/g, '<code style="background:#EBF0F5;color:#1B3A5C;padding:1px 5px;border-radius:3px;font-family:monospace;font-size:12.5px;font-weight:600">$1</code>');
 
-    // Interactive Graph Pills for named graphs
+    // Interactive Graph Pills for named graphs (supports bracketed variations and full graph names)
     const graphMap = [
-      { pattern: /\[?(Session Fatigue Delta Graph|Fatigue Delta Graph)\]?/gi, id: "avgSessionFatigueDelta", name: "Session Fatigue Delta Graph" },
-      { pattern: /\[?(Passage Reading Speed Graph|Reading Speed Graph|Reading Speed Trajectory Graph)\]?/gi, id: "avgPassageWpm", name: "Reading Speed Graph" },
-      { pattern: /\[?(Passage Reading Time Graph|Reading Time Graph)\]?/gi, id: "avgPassageReadSec", name: "Reading Time Graph" },
-      { pattern: /\[?(Score Trajectory Graph|Scaled Score Graph)\]?/gi, id: "scaledScore", name: "Score Trajectory Graph" },
-      { pattern: /\[?(Endurance Accuracy Delta Graph|Late-Stage Accuracy Graph)\]?/gi, id: "lateStageAccuracyDelta", name: "Endurance Accuracy Delta Graph" },
-      { pattern: /\[?(Time Sinks Graph|Sunk-Cost Graph|Time-Sink Graph)\]?/gi, id: "timeSinkCount", name: "Time Sinks Graph" },
-      { pattern: /\[?(Second-Guessing Net Impact Graph|Net Impact Graph)\]?/gi, id: "netSecondGuessing", name: "Second-Guessing Net Impact Graph" },
-      { pattern: /\[?(Question Pace Graph|Question Solving Pace Graph)\]?/gi, id: "avgQSec", name: "Question Pace Graph" }
+      {
+        pattern: /\[(?:<strong>)?(Session Fatigue Delta|Fatigue Delta)(?: Graph| Chart)?(?:<\/strong>)?\]|\b(?:<strong>)?(Session Fatigue Delta Graph|Fatigue Delta Graph)(?:<\/strong>)?\b/gi,
+        id: "avgSessionFatigueDelta",
+        name: "Session Fatigue Delta Graph"
+      },
+      {
+        pattern: /\[(?:<strong>)?(Passage Reading Speed|Reading Speed|Reading Speed Trajectory)(?: Graph| Chart)?(?:<\/strong>)?\]|\b(?:<strong>)?(Passage Reading Speed Graph|Reading Speed Graph|Reading Speed Trajectory Graph)(?:<\/strong>)?\b/gi,
+        id: "avgPassageWpm",
+        name: "Reading Speed Graph"
+      },
+      {
+        pattern: /\[(?:<strong>)?(Passage Reading Time|Reading Time)(?: Graph| Chart)?(?:<\/strong>)?\]|\b(?:<strong>)?(Passage Reading Time Graph|Reading Time Graph)(?:<\/strong>)?\b/gi,
+        id: "avgPassageReadSec",
+        name: "Reading Time Graph"
+      },
+      {
+        pattern: /\[(?:<strong>)?(Score Trajectory|Scaled Score)(?: Graph| Chart)?(?:<\/strong>)?\]|\b(?:<strong>)?(Score Trajectory Graph|Scaled Score Graph)(?:<\/strong>)?\b/gi,
+        id: "scaledScore",
+        name: "Score Trajectory Graph"
+      },
+      {
+        pattern: /\[(?:<strong>)?(Endurance Accuracy Delta|Late-Stage Accuracy)(?: Graph| Chart)?(?:<\/strong>)?\]|\b(?:<strong>)?(Endurance Accuracy Delta Graph|Late-Stage Accuracy Graph)(?:<\/strong>)?\b/gi,
+        id: "lateStageAccuracyDelta",
+        name: "Endurance Accuracy Delta Graph"
+      },
+      {
+        pattern: /\[(?:<strong>)?(Time Sinks|Sunk-Cost|Time-Sink)(?: Questions)?(?: Graph| Chart)?(?:<\/strong>)?\]|\b(?:<strong>)?(Time Sinks Graph|Sunk-Cost Graph|Time-Sink Graph)(?:<\/strong>)?\b/gi,
+        id: "timeSinkCount",
+        name: "Time Sinks Graph"
+      },
+      {
+        pattern: /\[(?:<strong>)?(Second-Guessing Net Impact|Net Second-Guessing|Net Impact)(?: Graph| Chart)?(?:<\/strong>)?\]|\b(?:<strong>)?(Second-Guessing Net Impact Graph|Net Impact Graph)(?:<\/strong>)?\b/gi,
+        id: "netSecondGuessing",
+        name: "Second-Guessing Net Impact Graph"
+      },
+      {
+        pattern: /\[(?:<strong>)?(Question Pace|Question Solving Pace)(?: Graph| Chart)?(?:<\/strong>)?\]|\b(?:<strong>)?(Question Pace Graph|Question Solving Pace Graph)(?:<\/strong>)?\b/gi,
+        id: "avgQSec",
+        name: "Question Pace Graph"
+      }
     ];
 
     graphMap.forEach(g => {
-      formatted = formatted.replace(g.pattern, `<a href="javascript:void(0)" onclick="window.jumpToPerformanceChart &amp;&amp; window.jumpToPerformanceChart('${g.id}')" style="display:inline-flex;align-items:center;background:#EDF4FB;color:#185A9D;border:1px solid #B8D5E5;padding:1px 6px;border-radius:3px;font-weight:600;font-size:11.5px;text-decoration:none;margin:0 2px" title="Click to inspect this graph in Performance Charts">${g.name} &rarr;</a>`);
+      formatted = formatted.replace(g.pattern, `<a href="javascript:void(0)" onclick="window.jumpToPerformanceChart &amp;&amp; window.jumpToPerformanceChart('${g.id}')" style="display:inline-flex;align-items:center;background:#EDF4FB;color:#185A9D;border:1px solid #B8D5E5;padding:1px 6px;border-radius:3px;font-weight:600;font-size:11.5px;text-decoration:none;margin:0 2px" title="Click to view this graph in Performance Charts">${g.name} &rarr;</a>`);
     });
 
     return formatted;
@@ -481,8 +527,17 @@
 
     if (!Array.isArray(allSessions) || !allSessions.length) return null;
 
-    // Filter out current exam session so we compare against PRIOR attempts
-    const prior = allSessions.filter(s => s.id !== info.examId && s.examId !== info.examId);
+    // Filter out ONLY the current exam session instance so we compare against PRIOR attempts
+    const currentAttemptId = info.attemptId || (info.reviewData && info.reviewData.id) || (info.id && String(info.id).startsWith("att_") ? info.id : null);
+    const currentTs = (info.reviewData && info.reviewData.ts) || info.ts || null;
+
+    const prior = allSessions.filter(s => {
+      if (!s) return false;
+      if (currentAttemptId && s.id === currentAttemptId) return false;
+      if (currentTs && Math.abs((s.ts || 0) - currentTs) < 3000 && s.scaledScore === info.scaledScore) return false;
+      if (info.id && s.id === info.id) return false;
+      return true;
+    });
     if (!prior.length) return null;
 
     // Sort chronologically
@@ -730,13 +785,13 @@ The student has completed ${hist.priorCount} previous practice session(s) in Dri
 
 | Performance Metric & Graph | Current Session | Prior Session (${hist.lastSession.date}) | Historical Baseline (${hist.priorCount} Attempts) | Trajectory Delta vs Baseline | AAMC Target Benchmark |
 | :--- | :---: | :---: | :---: | :---: | :---: |
-| **Scaled Score** (Score Trajectory Graph) | **${info.scaledScore}** / 132 | ${hist.lastSession.scaledScore} / 132 | ${hist.baseline.scaledScore} / 132 | **${scoreDeltaStr} pts** | 128+ Competitive Threshold |
-| **Passage Reading Speed** (Reading Speed Graph) | **${thisWpm} WPM** | ${hist.lastSession.avgPassageWpm} WPM | ${hist.baseline.avgPassageWpm} WPM | **${wpmDeltaStr} WPM** | 200–260 WPM Target Pace |
-| **Passage Reading Time** (Reading Time Graph) | **${Math.floor(thisReadSec / 60)}m ${String(thisReadSec % 60).padStart(2, "0")}s** | ${Math.floor(hist.lastSession.avgPassageReadSec / 60)}m ${String(hist.lastSession.avgPassageReadSec % 60).padStart(2, "0")}s | ${Math.floor(hist.baseline.avgPassageReadSec / 60)}m ${String(hist.baseline.avgPassageReadSec % 60).padStart(2, "0")}s | **${readSecDeltaStr}** | 3:00–4:00 Benchmark |
-| **Session Fatigue Drift vs P1** (Session Fatigue Delta Graph) | **${thisFatigueDelta >= 0 ? "+" : ""}${thisFatigueDelta}s vs P1** | ${hist.lastSession.avgSessionFatigueDelta >= 0 ? "+" : ""}${hist.lastSession.avgSessionFatigueDelta}s | ${hist.baseline.avgSessionFatigueDelta >= 0 ? "+" : ""}${hist.baseline.avgSessionFatigueDelta}s | **${fatigueDeltaDiffStr}** | 0s (Zero Cognitive Fatigue Drift) |
-| **Question Solving Pace** (Question Pace Graph) | **${info.avgQSec || 55}s / Q** | ${hist.lastSession.avgQSec}s / Q | ${hist.baseline.avgQSec}s / Q | **${qSecDeltaStr}** | 45–80s Optimal Pace |
-| **Sunk-Cost Questions (>100s)** (Time Sinks Graph) | **${thisTimeSinks} time sinks** | ${hist.lastSession.timeSinkCount} sinks | ${hist.baseline.timeSinkCount} sinks / session | **${timeSinksDeltaStr} sinks** | 0 Sunk Costs (Strict 90s Rule) |
-| **Second-Guessing Net Impact** (Net Impact Graph) | **${thisNetGuess >= 0 ? "+" : ""}${thisNetGuess} pts** | ${hist.lastSession.netSecondGuessing >= 0 ? "+" : ""}${hist.lastSession.netSecondGuessing} pts | ${hist.baseline.netSecondGuessing >= 0 ? "+" : ""}${hist.baseline.netSecondGuessing} pts | **${netGuessDeltaStr} pts** | >= 0 (Break-even or Gain) |
+| **Scaled Score** ([Score Trajectory Graph]) | **${info.scaledScore}** / 132 | ${hist.lastSession.scaledScore} / 132 | ${hist.baseline.scaledScore} / 132 | **${scoreDeltaStr} pts** | 128+ Competitive Threshold |
+| **Passage Reading Speed** ([Reading Speed Graph]) | **${thisWpm} WPM** | ${hist.lastSession.avgPassageWpm} WPM | ${hist.baseline.avgPassageWpm} WPM | **${wpmDeltaStr} WPM** | 200–260 WPM Target Pace |
+| **Passage Reading Time** ([Reading Time Graph]) | **${Math.floor(thisReadSec / 60)}m ${String(thisReadSec % 60).padStart(2, "0")}s** | ${Math.floor(hist.lastSession.avgPassageReadSec / 60)}m ${String(hist.lastSession.avgPassageReadSec % 60).padStart(2, "0")}s | ${Math.floor(hist.baseline.avgPassageReadSec / 60)}m ${String(hist.baseline.avgPassageReadSec % 60).padStart(2, "0")}s | **${readSecDeltaStr}** | 3:00–4:00 Benchmark |
+| **Session Fatigue Drift vs P1** ([Session Fatigue Delta Graph]) | **${thisFatigueDelta >= 0 ? "+" : ""}${thisFatigueDelta}s vs P1** | ${hist.lastSession.avgSessionFatigueDelta >= 0 ? "+" : ""}${hist.lastSession.avgSessionFatigueDelta}s | ${hist.baseline.avgSessionFatigueDelta >= 0 ? "+" : ""}${hist.baseline.avgSessionFatigueDelta}s | **${fatigueDeltaDiffStr}** | 0s (Zero Cognitive Fatigue Drift) |
+| **Question Solving Pace** ([Question Pace Graph]) | **${info.avgQSec || 55}s / Q** | ${hist.lastSession.avgQSec}s / Q | ${hist.baseline.avgQSec}s / Q | **${qSecDeltaStr}** | 45–80s Optimal Pace |
+| **Sunk-Cost Questions (>100s)** ([Time Sinks Graph]) | **${thisTimeSinks} time sinks** | ${hist.lastSession.timeSinkCount} sinks | ${hist.baseline.timeSinkCount} sinks / session | **${timeSinksDeltaStr} sinks** | 0 Sunk Costs (Strict 90s Rule) |
+| **Second-Guessing Net Impact** ([Second-Guessing Net Impact Graph]) | **${thisNetGuess >= 0 ? "+" : ""}${thisNetGuess} pts** | ${hist.lastSession.netSecondGuessing >= 0 ? "+" : ""}${hist.lastSession.netSecondGuessing} pts | ${hist.baseline.netSecondGuessing >= 0 ? "+" : ""}${hist.baseline.netSecondGuessing} pts | **${netGuessDeltaStr} pts** | >= 0 (Break-even or Gain) |
 
 **Recent Chronological Progression:**
 ${hist.recentTrend.map(s => `- ${s.date} • ${s.title}: Scaled **${s.scaledScore}/132** | Reading: **${s.avgPassageWpm} WPM** | Fatigue Drift: **${s.avgSessionFatigueDelta >= 0 ? "+" : ""}${s.avgSessionFatigueDelta}s** | Pure Q Pace: **${s.avgQSec}s** | Time Sinks: **${s.timeSinkCount}**`).join("\n")}
@@ -745,12 +800,14 @@ ${hist.recentTrend.map(s => `- ${s.date} • ${s.title}: Scaled **${s.scaledScor
       comparativeSection = `
 ### INITIAL BASELINE CALIBRATION (FIRST RECORDED SESSION):
 This is the student's first recorded practice attempt in DrillRoom. Establish their initial performance benchmark:
-- **Baseline Scaled Score:** ${info.scaledScore} / 132 (Target: 128+)
-- **Baseline Analytical Reading Speed:** ${thisWpm} WPM (Target: 200–260 WPM)
-- **Baseline Cognitive Fatigue Drift:** ${thisFatigueDelta >= 0 ? "+" : ""}${thisFatigueDelta}s vs Passage 1 (Target: 0s)
-- **Baseline Question Solving Pace:** ~${info.avgQSec || 55}s / Q (Target: 45–80s)
-- **Baseline Time Sinks (>100s):** ${thisTimeSinks}
-Detail the specific Performance Charts graphs they must monitor across subsequent attempts to confirm endurance and pacing gains.
+- **Baseline Scaled Score:** ${info.scaledScore} / 132 (Target: 128+) &bull; establish baseline on [Score Trajectory Graph]
+- **Baseline Analytical Reading Speed:** ${thisWpm} WPM (Target: 200–260 WPM) &bull; establish baseline on [Reading Speed Graph] and [Reading Time Graph]
+- **Baseline Cognitive Fatigue Drift:** ${thisFatigueDelta >= 0 ? "+" : ""}${thisFatigueDelta}s vs Passage 1 (Target: 0s) &bull; establish baseline on [Session Fatigue Delta Graph]
+- **Baseline Question Solving Pace:** ~${info.avgQSec || 55}s / Q (Target: 45–80s) &bull; establish baseline on [Question Pace Graph]
+- **Baseline Time Sinks (>100s):** ${thisTimeSinks} &bull; establish baseline on [Time Sinks Graph]
+- **Baseline Second-Guessing Impact:** ${thisNetGuess >= 0 ? "+" : ""}${thisNetGuess} pts &bull; establish baseline on [Second-Guessing Net Impact Graph]
+
+MANDATORY BASELINE INSTRUCTION: Even though this is their first session, you MUST explicitly name and cite the bracketed graphs above ([Score Trajectory Graph], [Reading Speed Graph], [Session Fatigue Delta Graph], [Reading Time Graph], [Time Sinks Graph], [Second-Guessing Net Impact Graph]) in Section 1 and in the Executive Summary to guide the student on which specific graphs in DrillRoom's Performance Charts will track their trajectory across upcoming practice sessions.
 `;
     }
 
@@ -780,6 +837,17 @@ ${reviewText}
 ### INSTRUCTIONS:
 Generate a thorough, high-impact, and empowering MCAT Diagnostic Report structured with the following exact Markdown headers:
 
+MANDATORY GRAPH CITATION REQUIREMENT:
+DrillRoom includes an interactive Performance Charts system with clickable graph inspection pills.
+In both the Executive Summary and Section 1, you MUST explicitly evaluate and cite at least 3 of these exact bracketed graph names:
+- [Score Trajectory Graph]
+- [Reading Speed Graph]
+- [Session Fatigue Delta Graph]
+- [Reading Time Graph]
+- [Time Sinks Graph]
+- [Second-Guessing Net Impact Graph]
+Do NOT omit these bracketed graph names under any circumstances! They allow the student to immediately click and inspect their charts.
+
 CRITICAL REQUIREMENT: The student wants an immediate, high-yield summary right at the top so they can know their top priorities in under 30 seconds without reading through the full diagnostic.
 You MUST begin your response with this exact Executive Summary block:
 
@@ -791,25 +859,34 @@ You MUST begin your response with this exact Executive Summary block:
 > 
 > **Pacing Reality:** [1 clear sentence summarizing their true pacing — citing their net question solving speed of ~${info.avgQSec || 55}s/question and passage reading pace, noting that timing is sound and where to maintain discipline.]
 > 
-> **Trajectory vs Previous Sessions:** [1–2 sentences directly comparing this attempt to their historical baseline, citing key graphs like the Session Fatigue Delta Graph, Passage Reading Speed Graph, and Score Trajectory Graph (e.g. "Up +2.5 scaled points vs your 129.5 baseline; reading speed accelerated to ${thisWpm} WPM on the Reading Speed Graph, and fatigue drift dropped by 20s on the Session Fatigue Delta Graph, confirming cognitive stamina conditioning.")]
+> **Trajectory vs Previous Sessions:** [1–2 sentences directly comparing this attempt to their historical baseline or establishing their starting benchmark. You MUST cite at least 2 key bracketed graphs (e.g. "Up +2.5 scaled points vs your 129.5 baseline on the [Score Trajectory Graph]; reading speed accelerated to ${thisWpm} WPM on the [Reading Speed Graph], and fatigue drift dropped to ${thisFatigueDelta >= 0 ? "+" : ""}${thisFatigueDelta}s on the [Session Fatigue Delta Graph], confirming cognitive stamina conditioning.")]
 > 
 > **#1 Rule for Your Next Section:** [1 punchy, memorable test-taking rule to deploy immediately on their next passage or section.]
 
 ### Quick Priority Punch List
 - **What Dropped Points:** [1–2 crisp sentences diagnosing the root cause behind their misses/guesses.]
 - **What Succeeded:** [1 sentence validating genuine mastery, strong comprehension, and uninflated accuracy.]
-- **Trajectory Delta:** [1 sentence summarizing where they moved compared to prior attempts, and which graph in Performance Charts confirms it.]
+- **Trajectory Delta:** [1 sentence summarizing where they moved compared to prior attempts (or baseline calibration), explicitly naming the [Score Trajectory Graph], [Reading Speed Graph], or [Session Fatigue Delta Graph] that confirms it.]
 - **Immediate Action Item:** [1 specific drill or rule to execute immediately.]
 
 ---
 
 # 1. Trajectory Comparison: Where You Stand vs Previous Sessions
-Synthesize where the student stands today compared to their earlier sessions using the multi-session comparison table and important graphs:
-- **Score Progression & Reliability (Score Trajectory Graph):** Contrast their current score (${info.scaledScore}/132) against their historical baseline. Is their performance stabilizing, reaching a new peak, or fluctuating?
-- **Passage Reading Speed & Analytical Stamina (Passage Reading Speed Graph & Reading Time Graph):** Compare reading speed (${thisWpm} WPM) and duration against prior attempts. Did faster reading sacrifice comprehension, or did it unlock extra question answering buffer?
-- **Cognitive Endurance & Fatigue Elimination (Session Fatigue Delta Graph & Endurance Accuracy Delta Graph):** Evaluate whether reading time drift on later passages is compressing toward the 0s baseline compared to earlier sessions. Are they eliminating late-section stamina drop-offs?
-- **Pacing Discipline & Sunk-Cost Elimination (Time Sinks Graph & Second-Guessing Net Impact Graph):** Compare time-sink frequency (>100s questions) and answer-switching discipline against earlier sessions.
-- **Recommended Graphs to Inspect in Performance Charts:** Explicitly name the 2–3 specific graphs in DrillRoom's Performance Charts (e.g., Session Fatigue Delta Graph, Reading Speed Graph, Score Trajectory Graph) that provide the most critical diagnostic visual for their next training cycle.
+${(hist && hist.priorCount > 0)
+  ? `Synthesize where the student stands today compared to their earlier sessions using the multi-session comparison table and important graphs. You MUST explicitly name each bracketed graph in your analysis:
+- **Score Progression & Reliability ([Score Trajectory Graph]):** Contrast their current score (${info.scaledScore}/132) against their historical baseline (${hist.baseline.scaledScore}/132). Is their performance stabilizing, reaching a new peak, or fluctuating?
+- **Passage Reading Speed & Stamina ([Reading Speed Graph] & [Reading Time Graph]):** Compare reading speed (${thisWpm} WPM vs baseline ${hist.baseline.avgPassageWpm} WPM) and duration. Did faster reading sacrifice comprehension, or did it unlock extra question answering buffer?
+- **Cognitive Endurance & Fatigue Elimination ([Session Fatigue Delta Graph] & [Endurance Accuracy Delta Graph]):** Evaluate whether reading time drift on later passages (${thisFatigueDelta >= 0 ? "+" : ""}${thisFatigueDelta}s) is compressing toward the 0s baseline compared to earlier sessions (${hist.baseline.avgSessionFatigueDelta >= 0 ? "+" : ""}${hist.baseline.avgSessionFatigueDelta}s). Are they eliminating late-section stamina drop-offs?
+- **Pacing Discipline & Sunk-Cost Elimination ([Time Sinks Graph] & [Second-Guessing Net Impact Graph]):** Compare time-sink frequency (>100s questions) and answer-switching discipline against earlier sessions.
+- **Recommended Graphs to Inspect in Performance Charts:** Explicitly name the 2–3 specific graphs in DrillRoom's Performance Charts (e.g., [Session Fatigue Delta Graph], [Reading Speed Graph], [Score Trajectory Graph]) that provide the most critical diagnostic visual for their next training cycle.`
+  : `(Title this section: "# 1. Baseline Calibration & Performance Trajectory Setup")
+Since this is the student's initial baseline session in DrillRoom, establish their benchmark across all core performance graphs in DrillRoom's Performance Charts. You MUST explicitly cite each bracketed graph to tell the student what metrics to track:
+- **Initial Score Calibration ([Score Trajectory Graph]):** Calibrate their initial ${info.scaledScore}/132 scaled score. Explain what score trajectory trend to target across upcoming sections.
+- **Passage Reading Pace & Stamina ([Reading Speed Graph] & [Reading Time Graph]):** Benchmark their initial reading speed (${thisWpm} WPM) and average reading duration (${Math.floor(thisReadSec / 60)}m ${String(thisReadSec % 60).padStart(2, "0")}s).
+- **Cognitive Fatigue & Endurance Baseline ([Session Fatigue Delta Graph]):** Benchmark their initial late-passage drift (${thisFatigueDelta >= 0 ? "+" : ""}${thisFatigueDelta}s vs Passage 1). Explain why tracking fatigue delta across sessions will reveal cognitive endurance conditioning.
+- **Pacing Discipline & Answer Changes ([Time Sinks Graph] & [Second-Guessing Net Impact Graph]):** Evaluate initial time sinks (${thisTimeSinks}) and net answer-change score impact (${thisNetGuess >= 0 ? "+" : ""}${thisNetGuess} pts).
+- **Recommended Graphs to Inspect in Performance Charts:** Explicitly name the 2–3 specific graphs (e.g. [Score Trajectory Graph], [Reading Speed Graph], [Session Fatigue Delta Graph]) they should immediately monitor in Performance Charts.`
+}
 
 # 2. Executive Score Diagnostic & Metacognitive Calibration
 - Diagnose their scaled score (${info.scaledScore}/132) against competitive medical school thresholds (500 median, 510 competitive, 515+ top tier).
@@ -845,7 +922,9 @@ Provide 3 battle-tested, concrete techniques tailored specifically to the flaws 
 - **Passage & Data Interrogation Rule**: How to extract independent/dependent variables and trends from data tables in under 20 seconds without getting bogged down in background text.
 
 # 7. 48-Hour High-Yield Action Plan
-Give the student a prioritized checklist of 3–4 ultra-specific topics, equations, or drills to execute over the next 48 hours to claw back 2–3 scaled points on their next section.`;
+Give the student a prioritized checklist of 3–4 ultra-specific topics, equations, or drills to execute over the next 48 hours to claw back 2–3 scaled points on their next section.
+
+REMINDER ON MANDATORY GRAPH PILLS: Make sure you have cited the bracketed graph names ([Score Trajectory Graph], [Reading Speed Graph], [Session Fatigue Delta Graph], etc.) in both the Executive Summary and Section 1 so interactive links render properly.`;
   }
 
   /* ===== CURRENT EXAM CONTEXT EXTRACTION ===== */
@@ -992,7 +1071,7 @@ Give the student a prioritized checklist of 3–4 ultra-specific topics, equatio
       conf: (E.conf && E.conf[idx]) ? E.conf[idx] : "unrated"
     })).filter(x => !x.isSkipped && x.seconds >= 110);
 
-    return {
+    const examInfo = {
       examId,
       title,
       sec,
@@ -1016,9 +1095,13 @@ Give the student a prioritized checklist of 3–4 ultra-specific topics, equatio
       archetypeList,
       answerChangeAudit,
       timeSinkQuestions,
-      historicalTrajectory: extractHistoricalTrajectory({ examId, sec }),
+      attemptId: (reviewData && reviewData.id) || (pe && pe.exam && pe.exam._activeAttemptId) || null,
+      ts: (reviewData && reviewData.ts) || null,
+      reviewData: reviewData,
       avgQSec
     };
+    examInfo.historicalTrajectory = extractHistoricalTrajectory(examInfo);
+    return examInfo;
   }
 
   /* ===== RENDER GEMINI CARD ON RESULTS SCREEN ===== */
@@ -1100,7 +1183,7 @@ Give the student a prioritized checklist of 3–4 ultra-specific topics, equatio
 
     // STATE 2: Cached Analysis Exists
     if (cached && cached.text) {
-      renderCompletedAnalysis(body, cached.text, cached.modelUsed, info);
+      renderCompletedAnalysis(body, cached.text, cached.modelUsed, info, cached.isLegacy);
       return;
     }
 
@@ -1327,8 +1410,24 @@ Give the student a prioritized checklist of 3–4 ultra-specific topics, equatio
   }
 
   /* Render formatted analysis view */
-  function renderCompletedAnalysis(container, markdownText, modelUsed, info) {
+  function renderCompletedAnalysis(container, markdownText, modelUsed, info, isLegacy) {
     const htmlReport = renderMarkdown(markdownText);
+
+    if (isLegacy === undefined) {
+      const cached = getCachedAnalysis(info ? info.examId : null);
+      isLegacy = cached ? !!cached.isLegacy : false;
+    }
+
+    const legacyBannerHtml = isLegacy ? `
+      <div id="gLegacyUpgradeBanner" style="margin-bottom:14px;padding:12px 16px;background:#EDF4FB;border:1px solid #B8D5E5;border-radius:4px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px">
+        <div style="font-size:12.5px;color:#185A9D;line-height:1.4">
+          <strong>Multi-Session Graph Trajectory Available:</strong> Upgrade this review to compare your performance against previous sessions using the Session Fatigue Delta Graph, Reading Speed Graph, and Score Trajectory Graph.
+        </div>
+        <button class="btn pri" id="gUpgradeRunBtn" style="font-size:12px;padding:6px 14px;white-space:nowrap">
+          Regenerate with Graph Analytics
+        </button>
+      </div>
+    ` : "";
 
     const chatStorageKey = "drillroom_chat_" + info.examId;
     let chatHistory = [];
@@ -1338,6 +1437,7 @@ Give the student a prioritized checklist of 3–4 ultra-specific topics, equatio
     } catch (e) { chatHistory = []; }
 
     container.innerHTML = `
+      ${legacyBannerHtml}
       <div style="margin-bottom:16px;padding-bottom:14px;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px">
         <div style="font-size:12.5px;color:var(--faint)">
           Analysis generated by <strong>${modelUsed}</strong> &bull; ${info.wrong} misses evaluated
@@ -1522,10 +1622,19 @@ Give the student a prioritized checklist of 3–4 ultra-specific topics, equatio
       };
     }
 
+    const upgradeBtn = document.getElementById("gUpgradeRunBtn");
+    if (upgradeBtn) {
+      upgradeBtn.onclick = () => {
+        try { localStorage.removeItem(CACHE_PREFIX + info.examId); } catch(e) {}
+        runAnalysis();
+      };
+    }
+
     const rerunBtn = document.getElementById("gRerunBtn");
     if (rerunBtn) {
       rerunBtn.onclick = () => {
-        if (confirm("Re-run Gemini AI analysis on this section?")) {
+        if (confirm("Re-run Gemini AI analysis on this section with updated graph trajectory analytics?")) {
+          try { localStorage.removeItem(CACHE_PREFIX + info.examId); } catch(e) {}
           runAnalysis();
         }
       };
