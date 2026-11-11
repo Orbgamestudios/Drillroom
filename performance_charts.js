@@ -523,6 +523,39 @@
   }
 
   /* ===== DATA SLICER FOR ACTIVE CONFIGURATION ===== */
+  const PASSAGE_METRICS = [
+    "passageWpm",
+    "passageReadSec",
+    "passageAccuracy",
+    "passageAvgQTime",
+    "passageTotalTime",
+    "passageWordCount",
+    "passageGuesses",
+    "passageFatigueDelta",
+    "passagePaceDelta"
+  ];
+
+  const SESSION_METRICS = [
+    "avgPassageReadSec",
+    "avgPassageWpm",
+    "scaledScore",
+    "pct",
+    "avgQSec",
+    "solidRatio",
+    "guessCount",
+    "netSecondGuessing",
+    "avgSessionFatigueDelta",
+    "lateStageAccuracyDelta",
+    "pacingConsistency",
+    "timeSinkCount",
+    "timeUsedMinutes"
+  ];
+
+  const QUESTION_METRICS = [
+    "qTime",
+    "qOutcomeScore"
+  ];
+
   function getActiveChartDataset() {
     const allSessions = getAllEnrichedSessions();
 
@@ -548,7 +581,19 @@
         }
       }
 
-      const activeY = (chartState.scope === "across" && chartState.acrossY) ? chartState.acrossY : (chartState.yMetric || chartState.acrossY || "avgPassageReadSec");
+      let candidateY = (chartState.scope === "across" && chartState.acrossY && SESSION_METRICS.includes(chartState.acrossY))
+        ? chartState.acrossY
+        : (chartState.yMetric || chartState.acrossY || "avgPassageReadSec");
+      if (!SESSION_METRICS.includes(candidateY)) {
+        if (candidateY === "passageWpm") candidateY = "avgPassageWpm";
+        else if (candidateY === "passageReadSec") candidateY = "avgPassageReadSec";
+        else if (candidateY === "passageAccuracy") candidateY = "pct";
+        else candidateY = "avgPassageReadSec";
+      }
+      chartState.yMetric = candidateY;
+      chartState.acrossY = candidateY;
+
+      const activeY = candidateY;
       const metricDef = METRIC_DEFS[activeY] || METRIC_DEFS.avgPassageReadSec;
       const points = filtered.map((s, idx) => {
         let yVal = 0;
@@ -608,7 +653,18 @@
         }
       }
 
-      const activeY = chartState.yMetric || "passageWpm";
+      let candidateY = chartState.yMetric;
+      if (!PASSAGE_METRICS.includes(candidateY)) {
+        if (candidateY === "avgPassageWpm") candidateY = "passageWpm";
+        else if (candidateY === "avgPassageReadSec" || candidateY === "qTime") candidateY = "passageReadSec";
+        else if (candidateY === "pct") candidateY = "passageAccuracy";
+        else candidateY = "passageWpm";
+      }
+      chartState.yMetric = candidateY;
+      chartState.withinY = candidateY;
+      chartState.withinX = "passage";
+
+      const activeY = candidateY;
       const metricDef = METRIC_DEFS[activeY] || METRIC_DEFS.passageWpm;
       const points = [];
       let globalIdx = 0;
@@ -618,16 +674,16 @@
         pList.forEach((p, pIdx) => {
           if (p.isSkipped) return;
           let yVal = 0;
-          if (activeY === "passageReadSec" || activeY === "avgPassageReadSec") yVal = p.readSec || p.seconds || 0;
-          else if (activeY === "passageWpm" || activeY === "avgPassageWpm") yVal = p.wpm || (p.readSec > 0 ? Math.round(p.wordCount / (p.readSec / 60)) : 200);
+          if (activeY === "passageReadSec" || activeY === "avgPassageReadSec") yVal = p.readSec || p.seconds || (p.wpm > 0 && p.wordCount > 0 ? Math.round((p.wordCount / p.wpm) * 60) : 180);
+          else if (activeY === "passageWpm" || activeY === "avgPassageWpm") yVal = p.wpm || (p.readSec > 0 && p.wordCount > 0 ? Math.round(p.wordCount / (p.readSec / 60)) : 200);
           else if (activeY === "passageWordCount") yVal = p.wordCount || 550;
-          else if (activeY === "passageAccuracy" || activeY === "pct") yVal = p.acc !== undefined ? p.acc : (s.pct || 0);
+          else if (activeY === "passageAccuracy" || activeY === "pct") yVal = p.acc !== undefined ? p.acc : (s.pct || 75);
           else if (activeY === "passageAvgQTime" || activeY === "avgQSec") yVal = p.avgQSec || s.avgQSec || 60;
           else if (activeY === "passageTotalTime") yVal = p.totalTime || 0;
           else if (activeY === "passageGuesses" || activeY === "guessCount") yVal = p.guesses || 0;
           else if (activeY === "passageFatigueDelta") yVal = p.fatigueDelta || 0;
           else if (activeY === "passagePaceDelta") yVal = p.paceDelta || 0;
-          else yVal = p.wpm || 0;
+          else yVal = p.wpm || 200;
 
           const sNum = sIdx + 1;
           const pNum = p.pNumber || (pIdx + 1);
@@ -683,8 +739,20 @@
         };
       }
 
-      if (activeMode === "questions_single" || chartState.withinX === "question") {
-        const activeY = (chartState.scope === "within" && chartState.withinY) ? chartState.withinY : (chartState.yMetric || "qTime");
+      const isQuestionsMode = (activeMode === "questions_single") || (chartState.scope === "within" && chartState.withinX === "question" && activeMode !== "passages_single");
+
+      if (isQuestionsMode) {
+        let candidateY = (chartState.scope === "within" && chartState.withinY && QUESTION_METRICS.includes(chartState.withinY))
+          ? chartState.withinY
+          : chartState.yMetric;
+        if (!QUESTION_METRICS.includes(candidateY)) {
+          candidateY = "qTime";
+        }
+        chartState.yMetric = candidateY;
+        chartState.withinY = candidateY;
+        chartState.withinX = "question";
+
+        const activeY = candidateY;
         const metricDef = METRIC_DEFS[activeY] || METRIC_DEFS.qTime;
         const qList = targetSession.questions || [];
         const points = qList.map((q, idx) => {
@@ -713,20 +781,46 @@
         };
       } else {
         // PASSAGES WITHIN 1 SPECIFIC SECTION
-        const activeY = (chartState.scope === "within" && chartState.withinY) ? chartState.withinY : (chartState.yMetric || "passageReadSec");
-        const metricDef = METRIC_DEFS[activeY] || METRIC_DEFS.passageReadSec;
+        let candidateY = (chartState.scope === "within" && chartState.withinY && PASSAGE_METRICS.includes(chartState.withinY))
+          ? chartState.withinY
+          : chartState.yMetric;
+        if (!PASSAGE_METRICS.includes(candidateY)) {
+          if (chartState.withinY && PASSAGE_METRICS.includes(chartState.withinY)) candidateY = chartState.withinY;
+          else if (candidateY === "avgPassageWpm") candidateY = "passageWpm";
+          else if (candidateY === "avgPassageReadSec" || candidateY === "qTime") candidateY = "passageReadSec";
+          else if (candidateY === "pct") candidateY = "passageAccuracy";
+          else candidateY = "passageWpm";
+        }
+        chartState.yMetric = candidateY;
+        chartState.withinY = candidateY;
+        chartState.withinX = "passage";
+
+        const activeY = candidateY;
+        const metricDef = METRIC_DEFS[activeY] || METRIC_DEFS.passageWpm;
         const pList = targetSession.passageStats || [];
         const points = pList.map((p, idx) => {
           let yVal = 0;
-          if (activeY === "passageReadSec") yVal = p.readSec || p.seconds || 0;
-          else if (activeY === "passageWpm") yVal = p.wpm || 0;
-          else if (activeY === "passageWordCount") yVal = p.wordCount || 550;
-          else if (activeY === "passageAccuracy") yVal = p.acc || 0;
-          else if (activeY === "passageAvgQTime") yVal = p.avgQSec || 60;
-          else if (activeY === "passageTotalTime") yVal = p.totalTime || 0;
-          else if (activeY === "passageGuesses") yVal = p.guesses || 0;
-          else if (activeY === "passageFatigueDelta") yVal = p.fatigueDelta || 0;
-          else if (activeY === "passagePaceDelta") yVal = p.paceDelta || 0;
+          if (activeY === "passageReadSec" || activeY === "avgPassageReadSec") {
+            yVal = p.readSec || p.seconds || (p.wpm > 0 && p.wordCount > 0 ? Math.round((p.wordCount / p.wpm) * 60) : 180);
+          } else if (activeY === "passageWpm" || activeY === "avgPassageWpm") {
+            yVal = p.wpm || (p.readSec > 0 && p.wordCount > 0 ? Math.round(p.wordCount / (p.readSec / 60)) : 200);
+          } else if (activeY === "passageWordCount") {
+            yVal = p.wordCount || 550;
+          } else if (activeY === "passageAccuracy" || activeY === "pct") {
+            yVal = p.acc !== undefined ? p.acc : (targetSession.pct || 75);
+          } else if (activeY === "passageAvgQTime" || activeY === "avgQSec") {
+            yVal = p.avgQSec || targetSession.avgQSec || 60;
+          } else if (activeY === "passageTotalTime") {
+            yVal = p.totalTime || ((p.readSec || 180) + ((p.totalQs || 5) * (p.avgQSec || 60)));
+          } else if (activeY === "passageGuesses" || activeY === "guessCount") {
+            yVal = p.guesses || 0;
+          } else if (activeY === "passageFatigueDelta") {
+            yVal = p.fatigueDelta || 0;
+          } else if (activeY === "passagePaceDelta") {
+            yVal = p.paceDelta || 0;
+          } else {
+            yVal = p.wpm || 200;
+          }
 
           return {
             xIndex: idx,
@@ -1531,10 +1625,17 @@ Generate a concise, high-impact MCAT Trend Assessment (under 250 words total) st
     const selY = wrap.querySelector("#selDirectYMetric");
     if (selY) {
       selY.onchange = (e) => {
-        chartState.yMetric = e.target.value;
-        if (activeMode === "sessions") chartState.acrossY = e.target.value;
-        else if (activeMode === "questions_single") chartState.withinY = e.target.value;
-        else chartState.withinY = e.target.value;
+        const val = e.target.value;
+        chartState.yMetric = val;
+        if (activeMode === "sessions") {
+          chartState.acrossY = val;
+        } else if (activeMode === "questions_single") {
+          chartState.withinX = "question";
+          chartState.withinY = val;
+        } else {
+          chartState.withinX = "passage";
+          chartState.withinY = val;
+        }
         renderPerformanceCharts(container);
       };
     }
@@ -1548,7 +1649,10 @@ Generate a concise, high-impact MCAT Trend Assessment (under 250 words total) st
 
         // Smart metric transition
         if (newMode === "sessions") {
-          chartState.acrossY = (chartState.yMetric === "passageWpm" ? "avgPassageWpm" : (chartState.yMetric === "passageReadSec" ? "avgPassageReadSec" : (chartState.yMetric === "passageAccuracy" ? "pct" : (chartState.acrossY || "avgPassageReadSec"))));
+          if (chartState.yMetric === "passageWpm") chartState.acrossY = "avgPassageWpm";
+          else if (chartState.yMetric === "passageReadSec") chartState.acrossY = "avgPassageReadSec";
+          else if (chartState.yMetric === "passageAccuracy") chartState.acrossY = "pct";
+          else if (!SESSION_METRICS.includes(chartState.acrossY)) chartState.acrossY = "avgPassageReadSec";
           chartState.yMetric = chartState.acrossY;
         } else if (newMode === "questions_single") {
           chartState.withinX = "question";
@@ -1558,9 +1662,9 @@ Generate a concise, high-impact MCAT Trend Assessment (under 250 words total) st
           // passages_all or passages_single
           chartState.withinX = "passage";
           if (chartState.yMetric === "avgPassageWpm") chartState.yMetric = "passageWpm";
-          else if (chartState.yMetric === "avgPassageReadSec") chartState.yMetric = "passageReadSec";
+          else if (chartState.yMetric === "avgPassageReadSec" || chartState.yMetric === "qTime") chartState.yMetric = "passageReadSec";
           else if (chartState.yMetric === "pct") chartState.yMetric = "passageAccuracy";
-          else if (!METRIC_DEFS[chartState.yMetric] || METRIC_DEFS[chartState.yMetric].scope === "across") {
+          else if (!PASSAGE_METRICS.includes(chartState.yMetric)) {
             chartState.yMetric = "passageWpm";
           }
           chartState.withinY = chartState.yMetric;
