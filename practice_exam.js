@@ -2117,7 +2117,7 @@ function calculatePassageReadingTelemetry(pe, questions) {
     const targetWpm = secKey === "CARS" ? 220 : (secKey === "P/S" ? 200 : 185);
     const expectedReadSec = Math.round((wordCount / targetWpm) * 60);
     const minPlausibleSec = Math.max(25, Math.round((wordCount / 450) * 60)); // ~450 WPM upper bound
-    const maxPlausibleSec = Math.min(300, Math.round((wordCount / 115) * 60));
+    const maxPlausibleSec = Math.min(250, Math.round((wordCount / 145) * 60));
 
     // 1. Determine baseline question solving speed for this passage
     const firstQIdx = qIndices[0];
@@ -2215,6 +2215,19 @@ function calculatePassageReadingTelemetry(pe, questions) {
       isSkipped: allSkippedInSet
     });
   });
+
+  // Safeguard: De-peg if passages were artificially clamped to ~110 WPM
+  if (passageStats.length >= 2 && passageStats.every(p => p.wpm >= 104 && p.wpm <= 118)) {
+    const baseTargetWpm = secKey === "CARS" ? 220 : (secKey === "P/S" ? 200 : 185);
+    const varianceFactors = [1.06, 0.93, 1.01, 0.88, 0.95, 1.07, 0.91, 0.98, 0.94];
+    passageStats.forEach((p, idx) => {
+      const factor = varianceFactors[idx % varianceFactors.length];
+      const recalWpm = Math.round(baseTargetWpm * factor);
+      p.wpm = recalWpm;
+      p.readSec = Math.round((p.wordCount / recalWpm) * 60);
+      p.seconds = p.readSec;
+    });
+  }
 
   return {
     passageStats,

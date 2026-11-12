@@ -121,20 +121,22 @@ console.log("  [PASSED] extractHistoricalTrajectory() correctly calculated multi
 console.log("\n--- TEST 2: buildDiagnosticPrompt() with Multi-Session Comparison ---");
 const prompt = sb.buildDiagnosticPrompt(mockCurrentExam);
 
-assert(prompt.includes("3 CORE PERFORMANCE TELEMETRY GRAPHS (EMBEDDED DIRECTLY IN REPORT):"), "Must include comparative section header");
+assert(prompt.includes("4 CORE PERFORMANCE TELEMETRY GRAPHS (EMBEDDED DIRECTLY IN REPORT):"), "Must include comparative section header");
 assert(prompt.includes("Score Trajectory Graph"), "Must reference Score Trajectory Graph");
 assert(prompt.includes("Reading Speed Graph") || prompt.includes("Passage Reading Speed Graph"), "Must reference Reading Speed Graph");
 assert(prompt.includes("Fatigue Delta Graph"), "Must reference Fatigue Delta Graph");
+assert(prompt.includes("Fatigue Reduction Trend Graph") || prompt.includes("Fatigue Reduction & Multi-Session Stamina Trend"), "Must reference Fatigue Reduction Trend Graph");
 assert(prompt.includes("Trajectory vs Previous Sessions:"), "Executive Summary must require Trajectory vs Previous Sessions callout");
-assert(prompt.includes("# 1. Visual Graph Diagnostics: What the 3 Key Graphs Reveal"), "Must include dedicated Section 1 for visual graph diagnostics");
+assert(prompt.includes("# 1. Visual Graph Diagnostics: What the 4 Key Graphs Reveal"), "Must include dedicated Section 1 for visual graph diagnostics");
 assert(prompt.includes("### Graph 1: Score Trajectory & MCAT Target Analysis"), "Must include Graph 1 subhead");
 assert(prompt.includes("### Graph 3: Passage Reading Speed (WPM) vs Comprehension Analysis"), "Must include Graph 3 subhead");
+assert(prompt.includes("### Graph 4: Fatigue Reduction & Multi-Session Stamina Trend"), "Must include Graph 4 subhead");
 console.log("  [PASSED] Diagnostic prompt contains comprehensive historical graph comparison table and instructions.");
 
 // 3. Verify renderMarkdown() turns graph mentions into clickable pills and mounts embedded charts
 console.log("\n--- TEST 3: renderMarkdown() Graph Pill Links & Embedded Chart Mount ---");
 const mockAIOutput = `
-# 1. Visual Graph Diagnostics: What the 3 Key Graphs Reveal
+# 1. Visual Graph Diagnostics: What the 4 Key Graphs Reveal
 Your stamina curve is consolidating on the [Session Fatigue Delta Graph].
 Meanwhile, your analytical reading pace on the [Reading Speed Graph] accelerated by +23 WPM compared to your baseline sessions.
 Cross-reference your progress on the [Score Trajectory Graph].

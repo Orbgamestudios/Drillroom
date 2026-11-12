@@ -144,7 +144,7 @@ assert(promptMulti.includes("MANDATORY GRAPH ANALYSIS REQUIREMENT"), "Prompt mus
 assert(promptMulti.includes("[Score Trajectory Graph]"), "Prompt must cite [Score Trajectory Graph]");
 assert(promptMulti.includes("[Reading Speed Graph]"), "Prompt must cite [Reading Speed Graph]");
 assert(promptMulti.includes("[Session Fatigue Delta Graph]"), "Prompt must cite [Session Fatigue Delta Graph]");
-assert(promptMulti.includes("# 1. Visual Graph Diagnostics: What the 3 Key Graphs Reveal"), "Prompt must include Visual Graph Diagnostics header");
+assert(promptMulti.includes("# 1. Visual Graph Diagnostics: What the 4 Key Graphs Reveal"), "Prompt must include Visual Graph Diagnostics header");
 assert(promptMulti.includes("REMINDER ON MANDATORY GRAPH PILLS"), "Prompt must include end-of-prompt reminder");
 console.log("✓ Test 2 Passed: Multi-session prompt enforces bracketed graph names in all required sections!");
 
@@ -190,7 +190,7 @@ const mockExamInfoFirst = {
 };
 
 const promptFirst = sbEmpty.buildDiagnosticPrompt(mockExamInfoFirst);
-assert(promptFirst.includes("3 CORE PERFORMANCE TELEMETRY GRAPHS (EMBEDDED DIRECTLY IN REPORT):"), "Prompt must include 3 core graphs section");
+assert(promptFirst.includes("4 CORE PERFORMANCE TELEMETRY GRAPHS (EMBEDDED DIRECTLY IN REPORT):"), "Prompt must include 4 core graphs section");
 assert(promptFirst.includes("MANDATORY GRAPH ANALYSIS REQUIREMENT"), "Prompt must include mandatory graph analysis requirement");
 assert(promptFirst.includes("[Score Trajectory Graph]"), "Baseline prompt must include [Score Trajectory Graph]");
 assert(promptFirst.includes("[Reading Speed Graph]"), "Baseline prompt must include [Reading Speed Graph]");
@@ -206,7 +206,7 @@ const markdownSample = `
 > **Trajectory:** Up +2.5 points on your **[Score Trajectory Graph]**. Your [Reading Speed] accelerated to 218 WPM on the [Passage Reading Speed Graph].
 > Fatigue drift compressed toward zero on the [Session Fatigue Delta Graph].
 
-# 1. Visual Graph Diagnostics: What the 3 Key Graphs Reveal
+# 1. Visual Graph Diagnostics: What the 4 Key Graphs Reveal
 - Score Progression: View the Score Trajectory Graph.
 - Cognitive stamina: Tracked via [Session Fatigue Delta].
 - Sunk Costs: Controlled on [Time Sinks Graph].
@@ -228,16 +228,16 @@ console.log("✓ Test 4 Passed: Graph pill formatting correctly handles bolded, 
 // ----------------------------------------------------
 console.log("\n--- TEST 5: Legacy Cache Invalidation & Upgrade Flag ---");
 const { sandbox: sbCache, mockStorage } = setupContext({
-  // Legacy cache from prompt v1 without graph trajectory citations or version < 3
+  // Legacy cache from prompt v1 without graph trajectory citations or version < 4
   drillroom_ai_analysis_pe_cars_1: JSON.stringify({
     text: "# Executive Summary\nYou scored 127 in CARS. Work on passage main ideas and timing.",
     modelUsed: "gemini-1.5-flash",
     ts: Date.now() - 3600000
     // No version field and no graph mentions
   }),
-  // Modern cache with version: 3 and graph trajectory mentions
+  // Modern cache with version: 4 and graph trajectory mentions
   drillroom_ai_analysis_pe_cars_2: JSON.stringify({
-    version: 3,
+    version: 4,
     text: "# Executive Summary\nYour [Score Trajectory Graph] is climbing. [Reading Speed Graph] confirms stamina.",
     modelUsed: "gemini-1.5-flash",
     ts: Date.now()
@@ -252,14 +252,14 @@ const modernCached = sbCache.getCachedGeminiAnalysis("pe_cars_2");
 assert(modernCached !== null, "Modern cached entry should exist");
 assert.strictEqual(modernCached.isLegacy, false, "Modern cached entry must NOT be flagged as legacy");
 
-// Test saving cache with version 3
+// Test saving cache with version 4
 sbCache.saveCachedGeminiAnalysis = (id, obj) => {
-  mockStorage["drillroom_ai_analysis_" + id] = JSON.stringify({ ...obj, version: 3 });
+  mockStorage["drillroom_ai_analysis_" + id] = JSON.stringify({ ...obj, version: 4 });
 };
 sbCache.saveCachedGeminiAnalysis("pe_cars_3", { text: "Testing graph save", modelUsed: "gemini-1.5-flash" });
 const saved = JSON.parse(mockStorage["drillroom_ai_analysis_pe_cars_3"]);
-assert.strictEqual(saved.version, 3, "Newly saved analysis must have version: 3");
+assert.strictEqual(saved.version, 4, "Newly saved analysis must have version: 4");
 
-console.log("✓ Test 5 Passed: Legacy cache entries detected and new entries saved with version 3!");
+console.log("✓ Test 5 Passed: Legacy cache entries detected and new entries saved with version 4!");
 
 console.log("\n>>> ALL AI SUMMARY GRAPH ENFORCEMENT & CACHE TESTS PASSED 100% <<<");
